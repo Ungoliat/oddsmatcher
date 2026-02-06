@@ -1,0 +1,2 @@
+match_id,date,league,home,away,final_home_goals,final_away_goals,had_event,minute_plus2,score_at_plus2,side_with_plus2,minute_equalized,score_at_equalized
+TEST_1,2026-01-01,EPL,HOME_TEAM,AWAY_TEAM,2,2,1,22,2-0,HOME,77,2-2
