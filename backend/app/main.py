@@ -17,6 +17,7 @@ from app.services.auth_service import (
     decode_token,
     ensure_default_users,
 )
+EVENTS_CACHE = []
 from app.services.user_repo import list_users
 from app.db.database import init_db
 
@@ -123,9 +124,10 @@ def get_events(
     competicion: Optional[str] = None,
     partido: Optional[str] = None,
     limit: int = 200,
+    offset: int = 0,
     _: UserPublic = Depends(require_role("pro", "admin")),
 ):
-    events = load_events_from_csv(CSV_BASE_PATH)
+    events = EVENTS_CACHE
 
     if deporte:
         events = [e for e in events if e.get("deporte") == deporte]
@@ -138,8 +140,14 @@ def get_events(
         q = partido.strip().lower()
         events = [e for e in events if q in (e.get("partido", "").lower())]
 
-    events = events[: max(1, min(limit, 2000))]
-    return {"count": len(events), "events": events}
+    total = len(events)
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+
+    page = events[offset : offset + limit]
+
+    return {"total": total, "limit": limit, "offset": offset, "events": page}
+
 
 
 @app.get("/events/filters")
@@ -222,12 +230,18 @@ async def admin_upload_csv(
     with open(target_path, "wb") as f:
         f.write(content)
 
+    # 🔥 AÑADE ESTO
+    global EVENTS_CACHE
+    EVENTS_CACHE = load_events_from_csv(CSV_BASE_PATH)
+    print(f"🔥 Cache recargado tras upload: {len(EVENTS_CACHE)}")
+
     return {
         "status": "ok",
         "rows_validated": rows_checked,
         "uploaded_as": str(target_path),
         "backup_created": str(backup_path) if backup_path.exists() else None,
     }
+
 
 
 @app.get("/admin/csv-info")
