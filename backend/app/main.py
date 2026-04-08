@@ -4,10 +4,18 @@ from typing import Optional
 from datetime import datetime
 import csv
 import shutil
+import json
 
 # --- FastAPI ---
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+
+# --- DB ---
+from sqlalchemy.orm import Session
+from app.db.session import engine, get_db
+from app.db.base import Base
+import app.models
 
 # --- App services ---
 from app.services.event_source import load_events_from_csv
@@ -17,14 +25,27 @@ from app.services.auth_service import (
     decode_token,
     ensure_default_users,
 )
-EVENTS_CACHE = []
 from app.services.user_repo import list_users
-from app.db.database import init_db
 
-# --- App models ---
+# --- Repositories ---
+from app.repositories.events_repo import (
+    get_events as get_events_db,
+    replace_events,
+)
+
+# --- Models ---
 from app.models.user import UserPublic
+from app.models.event import Event
 
-from fastapi.middleware.cors import CORSMiddleware
+# --- Sync providers ---
+from app.services.providers.mock_provider import MockOddsProvider
+from app.services.providers.the_odds_api_provider import TheOddsApiProvider
+from app.services.sync_service import sync_events_from_provider
+
+from app.db.database import Base, engine
+from app.db.migrations import run_sqlite_safe_migrations
+# --- Cache ---
+EVENTS_CACHE = []
 
 # ======================================================
 # APP
@@ -32,12 +53,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+Base.metadata.create_all(bind=engine)
+run_sqlite_safe_migrations(engine)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,10 +69,8 @@ app.add_middleware(
 # ======================================================
 
 BASE_DIR = Path(__file__).resolve().parents[1]  # backend/
-
-CSV_BASE_PATH = BASE_DIR / "data" / "apuestas.csv"   # CSV BASE (events)
-CSV_BETS_PATH = BASE_DIR / "data" / "bets.csv"       # CSV BETS (futuro)
-
+CSV_BASE_PATH = BASE_DIR / "data" / "apuestas.csv"
+CSV_BETS_PATH = BASE_DIR / "data" / "bets.csv"
 
 # ======================================================
 # CSV BASE CONTRACT (D4)
@@ -65,7 +84,6 @@ REQUIRED_COLUMNS = {
     "deporte",
 }
 
-
 # ======================================================
 # AUTH
 # ======================================================
@@ -75,6 +93,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> UserPublic:
     payload = decode_token(token)
+
     if not payload or "sub" not in payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -92,7 +111,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> UserPublic:
 def require_role(*allowed_roles: str):
     def checker(user: UserPublic = Depends(get_current_user)) -> UserPublic:
         if user.role not in allowed_roles:
-            raise HTTPException(status_code=403, detail="No tienes permisos para este recurso")
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para este recurso",
+            )
         return user
 
     return checker
@@ -104,7 +126,6 @@ def require_role(*allowed_roles: str):
 
 @app.on_event("startup")
 def on_startup():
-    init_db()
     ensure_default_users()
 
 
@@ -114,52 +135,68 @@ def root():
 
 
 # ======================================================
-# EVENTS (CSV BASE)
+# EVENTS
 # ======================================================
 
 @app.get("/events")
 def get_events(
     deporte: Optional[str] = None,
     bookie: Optional[str] = None,
+    mercado: Optional[str] = None,
     competicion: Optional[str] = None,
     partido: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
     _: UserPublic = Depends(require_role("pro", "admin")),
+    db: Session = Depends(get_db),
 ):
-    events = EVENTS_CACHE
-
-    if deporte:
-        events = [e for e in events if e.get("deporte") == deporte]
-    if bookie:
-        events = [e for e in events if e.get("bookie") == bookie]
-    if competicion:
-        q = competicion.strip().lower()
-        events = [e for e in events if q in (e.get("competicion", "").lower())]
-    if partido:
-        q = partido.strip().lower()
-        events = [e for e in events if q in (e.get("partido", "").lower())]
-
-    total = len(events)
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
 
-    page = events[offset : offset + limit]
-
-    return {"total": total, "limit": limit, "offset": offset, "events": page}
-
+    return get_events_db(
+        db=db,
+        limit=limit,
+        offset=offset,
+        deporte=deporte,
+        bookie=bookie,
+        mercado=mercado,
+        competicion=competicion,
+        partido=partido,
+    )
 
 
 @app.get("/events/filters")
 def get_event_filters(
     _: UserPublic = Depends(require_role("pro", "admin")),
+    db: Session = Depends(get_db),
 ):
-    events = load_events_from_csv(CSV_BASE_PATH)
+    bookies = sorted({row[0] for row in db.query(Event.bookie).distinct().all() if row[0]})
+    deportes = sorted({row[0] for row in db.query(Event.deporte).distinct().all() if row[0]})
+    competiciones = sorted({row[0] for row in db.query(Event.competicion).distinct().all() if row[0]})
 
-    bookies = sorted({e.get("bookie") for e in events if e.get("bookie")})
-    deportes = sorted({e.get("deporte") for e in events if e.get("deporte")})
-    competiciones = sorted({e.get("competicion") for e in events if e.get("competicion")})
-    mercados = sorted({m for e in events for m in (e.get("mercados") or []) if m})
+    rows = db.query(Event.mercados).all()
+    mercados_set = set()
+
+    for row in rows:
+        raw = row[0]
+        if not raw:
+            continue
+
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for m in parsed:
+                    if m:
+                        mercados_set.add(str(m).strip())
+            else:
+                mercados_set.add(str(parsed).strip())
+        except Exception:
+            for m in str(raw).split(","):
+                m = m.strip()
+                if m:
+                    mercados_set.add(m)
+
+    mercados = sorted(mercados_set)
 
     return {
         "bookies": bookies,
@@ -182,8 +219,11 @@ def admin_list_users(_: UserPublic = Depends(require_role("admin"))):
 async def admin_upload_csv(
     file: UploadFile = File(...),
     _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
 ):
-    if not file.filename.lower().endswith(".csv"):
+    global EVENTS_CACHE
+
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Solo se permiten archivos .csv")
 
     content = await file.read()
@@ -219,6 +259,22 @@ async def admin_upload_csv(
     if rows_checked == 0:
         raise HTTPException(status_code=400, detail="El CSV no contiene datos")
 
+    reader_for_db = csv.DictReader(decoded.splitlines())
+    events = []
+
+    for row in reader_for_db:
+        mercados = [m.strip() for m in row["mercados"].split(",") if m.strip()]
+
+        events.append(
+            {
+                "bookie": row["bookie"].strip(),
+                "competicion": row["competicion"].strip(),
+                "partido": row["partido"].strip(),
+                "deporte": row["deporte"].strip(),
+                "mercados": mercados,
+            }
+        )
+
     target_path = CSV_BASE_PATH
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = target_path.with_name(f"apuestas_backup_{timestamp}.csv")
@@ -230,18 +286,19 @@ async def admin_upload_csv(
     with open(target_path, "wb") as f:
         f.write(content)
 
-    # 🔥 AÑADE ESTO
-    global EVENTS_CACHE
     EVENTS_CACHE = load_events_from_csv(CSV_BASE_PATH)
     print(f"🔥 Cache recargado tras upload: {len(EVENTS_CACHE)}")
+
+    replace_events(db, events)
+    print(f"💾 Eventos guardados en DB: {len(events)}")
 
     return {
         "status": "ok",
         "rows_validated": rows_checked,
+        "rows_inserted": len(events),
         "uploaded_as": str(target_path),
         "backup_created": str(backup_path) if backup_path.exists() else None,
     }
-
 
 
 @app.get("/admin/csv-info")
@@ -264,6 +321,26 @@ def admin_csv_info(_: UserPublic = Depends(require_role("admin"))):
     }
 
 
+@app.post("/admin/sync-api")
+def sync_api(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    provider = MockOddsProvider()
+    result = sync_events_from_provider(db=db, provider=provider)
+    return result
+
+
+@app.post("/admin/sync-api-real")
+def sync_api_real(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    provider = TheOddsApiProvider()
+    result = sync_events_from_provider(db=db, provider=provider)
+    return result
+
+
 # ======================================================
 # AUTH ENDPOINTS
 # ======================================================
@@ -271,11 +348,19 @@ def admin_csv_info(_: UserPublic = Depends(require_role("admin"))):
 @app.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = authenticate_user(form_data.username, form_data.password)
+
     if not user:
-        raise HTTPException(status_code=400, detail="Usuario o contraseña incorrectos")
+        raise HTTPException(
+            status_code=400,
+            detail="Usuario o contraseña incorrectos",
+        )
 
     token = create_access_token(subject=user.username, role=user.role)
-    return {"access_token": token, "token_type": "bearer"}
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+    }
 
 
 @app.get("/me")

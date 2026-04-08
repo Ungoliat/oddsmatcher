@@ -16,3 +16,14 @@ csv_uploads/
 
 # Env
 .env
+# Evitar subir datos locales
+backend/data/*.csv
+backend/data/*.db
+backend/*.db
+
+# Entornos y basura
+venv/
+.venv/
+__pycache__/
+node_modules/
+dist/

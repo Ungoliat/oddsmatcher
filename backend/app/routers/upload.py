@@ -1,14 +1,20 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.repositories.events_repo import replace_events
 import csv
 import io
+
 
 router = APIRouter(
     prefix="/upload",
     tags=["Upload CSV"]
 )
 @router.post("/csv")
-async def upload_csv(file: UploadFile = File(...)):
-
+async def upload_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     # 1️⃣ Validar extensión
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(
@@ -75,9 +81,27 @@ async def upload_csv(file: UploadFile = File(...)):
                     detail=f"Fila {index}: el campo '{field}' está vacío"
                 )
 
+    # 6️⃣ Transformar filas a events (normalizando mercados)
+    events = []
+
+    for row in rows:
+        mercados = [m.strip() for m in row["mercados"].split(",") if m.strip()]
+
+        events.append({
+            "bookie": row["bookie"],
+            "competicion": row["competicion"],
+            "partido": row["partido"],
+            "deporte": row["deporte"],
+            "mercados": mercados,
+        })
+
+    # 7️⃣ Guardar en base de datos
+    replace_events(db, events)
+
     # ✅ Todo correcto
     return {
         "status": "ok",
         "rows_validated": len(rows),
-        "message": "CSV validado correctamente"
+        "rows_inserted": len(events),
+        "message": "CSV validado y guardado en DB correctamente"
     }
