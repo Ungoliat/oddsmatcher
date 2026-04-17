@@ -42,7 +42,8 @@ from app.services.providers.mock_provider import MockOddsProvider
 from app.services.providers.the_odds_api_provider import TheOddsApiProvider
 from app.services.sync_service import sync_events_from_provider
 
-from app.db.database import Base, engine
+from app.db.base import Base
+from app.db.session import engine
 from app.db.migrations import run_sqlite_safe_migrations
 # --- Cache ---
 EVENTS_CACHE = []
