@@ -367,3 +367,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.get("/me")
 def me(current_user: UserPublic = Depends(get_current_user)):
     return current_user
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.get("/version")
+def version():
+    return {"version": "v1.0"}
