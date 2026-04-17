@@ -41,6 +41,12 @@ class TheOddsApiProvider:
             }
 
             response = requests.get(url, params=params, timeout=self.timeout)
+
+            if not response.ok:
+                raise ValueError(
+                    f"The Odds API error {response.status_code} en {sport_key}: {response.text}"
+                )
+
             response.raise_for_status()
 
             data = response.json()
