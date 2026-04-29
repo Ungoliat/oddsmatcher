@@ -31,6 +31,7 @@ from app.services.user_repo import list_users
 from app.repositories.events_repo import (
     get_events as get_events_db,
     replace_events,
+    get_grouped_events,
 )
 
 # --- Models ---
@@ -165,6 +166,22 @@ def get_events(
         partido=partido,
     )
 
+@app.get("/events/grouped")
+def read_grouped_events(
+    deporte: str | None = None,
+    competicion: str | None = None,
+    partido: str | None = None,
+    bookie: str | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("pro", "admin")),
+):
+    return get_grouped_events(
+        db=db,
+        deporte=deporte,
+        competicion=competicion,
+        partido=partido,
+        bookie=bookie,
+    )
 
 @app.get("/events/filters")
 def get_event_filters(
@@ -341,7 +358,121 @@ def sync_api_real(
     result = sync_events_from_provider(db=db, provider=provider)
     return result
 
+@app.get("/odds/matching")
+def get_matching_odds(
+    comision: float = 0.02,
+    db: Session = Depends(get_db),
+    _: UserPublic = Depends(require_role("pro", "admin")),
+):
+    from app.repositories.events_repo import get_grouped_events
+    import json
 
+    data = get_grouped_events(db=db)
+    groups = data.get("groups", [])
+
+    oportunidades = []
+
+    for group in groups:
+        partido = group["partido"]
+        competicion = group["competicion"]
+        deporte = group["deporte"]
+
+        # Separar bookies normales y betfair
+        betfair = next((b for b in group["bookies"] if b["bookie"] == "betfair"), None)
+        casas = [b for b in group["bookies"] if b["bookie"] != "betfair"]
+
+        if not betfair:
+            continue
+
+        for casa in casas:
+            bookie = casa["bookie"]
+
+            for mercado, outcomes_back in casa["cuotas"].items():
+                if mercado not in betfair["cuotas"]:
+                    continue
+
+                outcomes_lay = betfair["cuotas"][mercado]
+
+                for outcome, back_odds in outcomes_back.items():
+                    if outcome not in outcomes_lay:
+                        continue
+
+                    lay_odds = outcomes_lay[outcome]
+
+                    if lay_odds <= 1:
+                        continue
+
+                    # Calculo con back_stake = 100 como referencia
+                    back_stake = 100
+                    lay_stake = (back_stake * back_odds) / (lay_odds - comision)
+                    ganancia_back = back_stake * (back_odds - 1)
+                    perdida_lay = lay_stake * (lay_odds - 1)
+                    resultado_neto = ganancia_back - perdida_lay
+                    rating = (back_stake + resultado_neto) / back_stake * 100
+
+                    oportunidades.append({
+                        "competicion": competicion,
+                        "partido": partido,
+                        "outcome": outcome,
+                        "mercado": mercado,
+                        "bookie": bookie,
+                        "back_odds": back_odds,
+                        "lay_odds": lay_odds,
+                        "lay_stake": round(lay_stake, 2),
+                        "resultado_neto": round(resultado_neto, 2),
+                        "rating": round(rating, 2),
+                        "commence_time": group.get("commence_time"),
+                    })
+    oportunidades = [o for o in oportunidades if 85 <= o["rating"] <= 102]
+    oportunidades.sort(key=lambda x: x["rating"], reverse=True)
+
+    return {
+        "comision": comision,
+        "total": len(oportunidades),
+        "oportunidades": oportunidades,
+    }
+
+    # ======================================================
+# LEDGER (apuestas del usuario)
+# ======================================================
+
+@app.get("/bets")
+def get_bets(current_user: UserPublic = Depends(get_current_user)):
+    from app.repositories.bets_repo import list_bets
+    return {"bets": list_bets(current_user.username)}
+
+
+@app.post("/bets")
+def add_bet(
+    data: dict,
+    current_user: UserPublic = Depends(get_current_user),
+):
+    from app.repositories.bets_repo import create_bet
+    bet = create_bet(username=current_user.username, data=data)
+    return bet
+
+
+@app.patch("/bets/{bet_id}")
+def update_bet(
+    bet_id: int,
+    data: dict,
+    current_user: UserPublic = Depends(get_current_user),
+):
+    from app.repositories.bets_repo import update_bet as update_bet_repo
+    bet = update_bet_repo(bet_id=bet_id, username=current_user.username, data=data)
+    if not bet:
+        raise HTTPException(status_code=404, detail="Apuesta no encontrada")
+    return bet
+
+
+@app.delete("/bets/{bet_id}")
+def delete_bet(
+    bet_id: int,
+    current_user: UserPublic = Depends(get_current_user),
+):
+    from app.repositories.bets_repo import delete_bet as delete_bet_repo
+    delete_bet_repo(bet_id=bet_id, username=current_user.username)
+    return {"ok": True}
 # ======================================================
 # AUTH ENDPOINTS
 # ======================================================

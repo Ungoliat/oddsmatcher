@@ -1,620 +1,671 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
+const API = "http://localhost:8000";
 
-function App() {
-  // =========================
-  // AUTH
-  // =========================
-  const [token, setToken] = useState(localStorage.getItem("jwt") || "");
-  const [user, setUser] = useState(null);
-
-  // =========================
-  // DATA EVENTS
-  // =========================
-  const [items, setItems] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [limit, setLimit] = useState(200);
-  const [nextOffset, setNextOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingEvents, setLoadingEvents] = useState(false);
-
-  // =========================
-  // FILTER OPTIONS (desde DB)
-  // =========================
-  const [filterOptions, setFilterOptions] = useState({
-    bookies: [],
-    deportes: [],
-    competiciones: [],
-    mercados: [],
+function formatFecha(isoString) {
+  if (!isoString) return "—";
+  const d = new Date(isoString);
+  return d.toLocaleDateString("es-ES", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
   });
-  const [loadingFilters, setLoadingFilters] = useState(false);
+}
 
-  // =========================
-  // SELECTED FILTERS
-  // =========================
-  const [selectedDeporte, setSelectedDeporte] = useState("");
-  const [selectedBookie, setSelectedBookie] = useState("");
-  const [selectedMercado, setSelectedMercado] = useState("");
+function Calculadora({ op, comision, token, onClose, onGuardado }) {
+  const [stake, setStake] = useState(100);
+  const [backOdds, setBackOdds] = useState(op.back_odds);
+  const [layOdds, setLayOdds] = useState(op.lay_odds);
+  const [com, setCom] = useState(comision);
+  const [notas, setNotas] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
 
-  const [competicionInput, setCompeticionInput] = useState("");
-  const [partidoInput, setPartidoInput] = useState("");
+  const layStake = (stake * backOdds) / (layOdds - com / 100);
+  const gananciaBack = stake * (backOdds - 1);
+  const perdidaLay = layStake * (layOdds - 1);
+  const neto = gananciaBack - perdidaLay;
+  const rating = ((stake + neto) / stake) * 100;
 
-  const [selectedCompeticion, setSelectedCompeticion] = useState("");
-  const [selectedPartido, setSelectedPartido] = useState("");
+  function getRatingColor(r) {
+    if (r >= 100) return "#2ecc71";
+    if (r >= 90) return "#f39c12";
+    return "#e74c3c";
+  }
 
-  // =========================
-  // LOGIN FORM
-  // =========================
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-
-  // =========================
-  // UI / STATUS
-  // =========================
-  const [error, setError] = useState("");
-  const sentinelRef = useRef(null);
-  const observerRef = useRef(null);
-  const loadingEventsRef = useRef(false);
-
-  // =========================
-  // AUTH HELPERS
-  // =========================
-  const fetchMe = useCallback(async (jwt) => {
+  async function guardarApuesta() {
+    setGuardando(true);
     try {
-      const res = await fetch(`${API_URL}/me`, {
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-        },
-      });
-
-      if (!res.ok) {
-        throw new Error("Token inválido o sesión expirada");
-      }
-
-      const data = await res.json();
-      setUser(data);
-    } catch (err) {
-      console.error("Error en /me:", err);
-      setUser(null);
-      setToken("");
-      localStorage.removeItem("jwt");
-    }
-  }, []);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setError("");
-
-    try {
-      const body = new URLSearchParams();
-      body.append("username", username);
-      body.append("password", password);
-
-      const res = await fetch(`${API_URL}/token`, {
+      const res = await fetch(`${API}/bets`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body,
-      });
-
-      if (!res.ok) {
-        throw new Error("Login incorrecto");
-      }
-
-      const data = await res.json();
-      localStorage.setItem("jwt", data.access_token);
-      setToken(data.access_token);
-      await fetchMe(data.access_token);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Error de login");
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("jwt");
-    setToken("");
-    setUser(null);
-    setItems([]);
-    setTotal(0);
-    setNextOffset(0);
-    setHasMore(true);
-    setLoadingEvents(false);
-    setLoadingFilters(false);
-    setError("");
-    loadingEventsRef.current = false;
-
-    setSelectedDeporte("");
-    setSelectedBookie("");
-    setSelectedMercado("");
-    setCompeticionInput("");
-    setPartidoInput("");
-    setSelectedCompeticion("");
-    setSelectedPartido("");
-
-    setFilterOptions({
-      bookies: [],
-      deportes: [],
-      competiciones: [],
-      mercados: [],
-    });
-  };
-
-  // =========================
-  // LOAD FILTERS
-  // =========================
-  const loadFilters = useCallback(async () => {
-    if (!token) return;
-
-    setLoadingFilters(true);
-    setError("");
-
-    try {
-      const res = await fetch(`${API_URL}/events/filters`, {
-        headers: {
           Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          partido: op.partido,
+          competicion: op.competicion,
+          fecha_evento: op.commence_time,
+          outcome: op.outcome,
+          mercado: op.mercado,
+          bookie: op.bookie,
+          back_odds: backOdds,
+          lay_odds: layOdds,
+          stake_back: stake,
+          stake_lay: parseFloat(layStake.toFixed(2)),
+          resultado_estimado: parseFloat(neto.toFixed(2)),
+          notas: notas,
+          estado: "pendiente",
+        }),
       });
-
-      if (!res.ok) {
-        throw new Error("No se pudieron cargar los filtros");
+      if (res.ok) {
+        setGuardado(true);
+        onGuardado();
+        setTimeout(() => onClose(), 1200);
       }
-
-      const data = await res.json();
-
-      setFilterOptions({
-        bookies: data.bookies || [],
-        deportes: data.deportes || [],
-        competiciones: data.competiciones || [],
-        mercados: data.mercados || [],
-      });
-    } catch (err) {
-      console.error("Error cargando filtros:", err);
-      setError(err.message || "Error cargando filtros");
     } finally {
-      setLoadingFilters(false);
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modalBox} onClick={e => e.stopPropagation()}>
+        <div style={styles.modalHeader}>
+          <div>
+            <div style={{ color: "#aaa", fontSize: "0.85rem" }}>{op.competicion}</div>
+            <div style={{ fontWeight: "bold", fontSize: "1.1rem" }}>{op.partido}</div>
+            <div style={{ color: "#646cff", marginTop: "0.2rem" }}>
+              {op.outcome} — {op.mercado}
+            </div>
+          </div>
+          <button onClick={onClose} style={styles.btnCerrar}>✕</button>
+        </div>
+
+        <div style={styles.modalGrid}>
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>💶 Stake back (€)</label>
+            <input type="number" value={stake} min="1"
+              onChange={e => setStake(parseFloat(e.target.value) || 0)}
+              style={styles.modalInput} />
+          </div>
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>📈 Cuota back ({op.bookie})</label>
+            <input type="number" value={backOdds} min="1" step="0.01"
+              onChange={e => setBackOdds(parseFloat(e.target.value) || 0)}
+              style={{ ...styles.modalInput, borderColor: "#2ecc71" }} />
+          </div>
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>📉 Cuota lay (Betfair)</label>
+            <input type="number" value={layOdds} min="1" step="0.01"
+              onChange={e => setLayOdds(parseFloat(e.target.value) || 0)}
+              style={{ ...styles.modalInput, borderColor: "#e74c3c" }} />
+          </div>
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>💸 Comisión Betfair (%)</label>
+            <input type="number" value={com} min="0" max="10" step="0.1"
+              onChange={e => setCom(parseFloat(e.target.value) || 0)}
+              style={styles.modalInput} />
+          </div>
+        </div>
+
+        <div style={styles.resultadosGrid}>
+          <div style={styles.resultadoBox}>
+            <span style={styles.resultadoLabel}>Lay stake</span>
+            <span style={styles.resultadoValor}>{isFinite(layStake) ? layStake.toFixed(2) : "—"}€</span>
+          </div>
+          <div style={styles.resultadoBox}>
+            <span style={styles.resultadoLabel}>Resultado neto</span>
+            <span style={{ ...styles.resultadoValor, color: neto >= 0 ? "#2ecc71" : "#e74c3c" }}>
+              {isFinite(neto) ? (neto >= 0 ? "+" : "") + neto.toFixed(2) : "—"}€
+            </span>
+          </div>
+          <div style={{ ...styles.resultadoBox, background: "rgba(100,108,255,0.1)", border: "1px solid #646cff" }}>
+            <span style={styles.resultadoLabel}>Rating</span>
+            <span style={{ ...styles.resultadoValor, color: getRatingColor(rating), fontSize: "1.5rem" }}>
+              {isFinite(rating) ? rating.toFixed(2) : "—"}%
+            </span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: "1rem" }}>
+          <label style={styles.modalLabel}>📝 Notas (opcional)</label>
+          <input
+            type="text"
+            value={notas}
+            onChange={e => setNotas(e.target.value)}
+            placeholder="Ej: apuesta calificante, 10 FB..."
+            style={{ ...styles.modalInput, width: "100%", marginTop: "0.4rem", boxSizing: "border-box" }}
+          />
+        </div>
+
+        <button
+          onClick={guardarApuesta}
+          disabled={guardando || guardado}
+          style={{
+            ...styles.btnPrimary,
+            width: "100%",
+            marginTop: "1rem",
+            background: guardado ? "#2ecc71" : "#646cff",
+            fontSize: "1rem",
+            padding: "0.75rem",
+          }}>
+          {guardado ? "✅ Guardado" : guardando ? "Guardando..." : "💾 Guardar apuesta"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FilaLedger({ bet, onUpdate, onDelete }) {
+  const [editando, setEditando] = useState(false);
+  const [notas, setNotas] = useState(bet.notas || "");
+  const [resultadoReal, setResultadoReal] = useState(bet.resultado_real ?? bet.resultado_estimado ?? "");
+  const [estado, setEstado] = useState(bet.estado);
+  const [tipo, setTipo] = useState(bet.tipo || "MB");
+
+  async function guardar() {
+    await onUpdate(bet.id, { notas, resultado_real: parseFloat(resultadoReal) || null, estado, tipo });
+    setEditando(false);
+  }
+
+  const resultado = bet.resultado_real ?? bet.resultado_estimado;
+  const esPositivo = resultado >= 0;
+
+  return (
+    <tr style={{ borderBottom: "1px solid #2a2a2a" }}>
+      <td style={styles.td}>{formatFecha(bet.fecha_registro)}</td>
+      <td style={styles.td}>
+        {editando ? (
+          <select value={tipo} onChange={e => setTipo(e.target.value)}
+            style={{ ...styles.select, padding: "0.3rem" }}>
+            <option value="MB">MB</option>
+            <option value="ARB">ARB</option>
+            <option value="DUTCH">Dutch</option>
+            <option value="DUTCH3">Dutch 3B</option>
+          </select>
+        ) : (
+          <span style={{
+            padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.8rem",
+            background: tipo === "MB" ? "rgba(100,108,255,0.2)" :
+              tipo === "ARB" ? "rgba(46,204,113,0.2)" :
+              tipo === "DUTCH" ? "rgba(243,156,18,0.2)" : "rgba(231,76,60,0.2)",
+            color: tipo === "MB" ? "#646cff" :
+              tipo === "ARB" ? "#2ecc71" :
+              tipo === "DUTCH" ? "#f39c12" : "#e74c3c",
+          }}>{tipo}</span>
+        )}
+      </td>
+      <td style={styles.td}>
+        {editando ? (
+          <input value={notas} onChange={e => setNotas(e.target.value)}
+            style={{ ...styles.modalInput, padding: "0.3rem", fontSize: "0.85rem", width: "120px" }} />
+        ) : (
+          <span style={{ color: "#aaa" }}>{bet.notas || "—"}</span>
+        )}
+      </td>
+      <td style={styles.td}>
+        <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{bet.competicion}</div>
+        <div>{bet.partido}</div>
+        <div style={{ fontSize: "0.8rem", color: "#646cff" }}>{bet.outcome}</div>
+      </td>
+      <td style={styles.td}>{formatFecha(bet.fecha_evento)}</td>
+      <td style={styles.td}>{bet.bookie}</td>
+      <td style={{ ...styles.td, color: "#2ecc71" }}>{bet.back_odds}</td>
+      <td style={{ ...styles.td, color: "#e74c3c" }}>{bet.lay_odds}</td>
+      <td style={styles.td}>{bet.stake_back}€</td>
+      <td style={styles.td}>{bet.stake_lay}€</td>
+      <td style={styles.td}>
+        {editando ? (
+          <input type="number" value={resultadoReal}
+            onChange={e => setResultadoReal(e.target.value)}
+            style={{ ...styles.modalInput, padding: "0.3rem", fontSize: "0.85rem", width: "80px" }} />
+        ) : (
+          <span style={{ color: esPositivo ? "#2ecc71" : "#e74c3c", fontWeight: "bold" }}>
+            {resultado != null ? (esPositivo ? "+" : "") + parseFloat(resultado).toFixed(2) + "€" : "—"}
+          </span>
+        )}
+      </td>
+      <td style={styles.td}>
+        {editando ? (
+          <select value={estado} onChange={e => setEstado(e.target.value)}
+            style={{ ...styles.select, padding: "0.3rem" }}>
+            <option value="pendiente">Pendiente</option>
+            <option value="ganada">Ganada</option>
+            <option value="perdida">Perdida</option>
+            <option value="completada">Completada</option>
+          </select>
+        ) : (
+          <span style={{
+            padding: "0.3rem 0.7rem", borderRadius: "4px", fontSize: "0.85rem",
+            display: "inline-flex", alignItems: "center", gap: "0.4rem",
+            fontWeight: "bold",
+            background: estado === "ganada" ? "rgba(46,204,113,0.2)" :
+              estado === "perdida" ? "rgba(231,76,60,0.2)" :
+              estado === "completada" ? "rgba(46,204,113,0.2)" : "rgba(255,165,0,0.2)",
+            color: estado === "ganada" ? "#2ecc71" :
+              estado === "perdida" ? "#e74c3c" :
+              estado === "completada" ? "#2ecc71" : "#f39c12",
+            border: `1px solid ${estado === "ganada" ? "#2ecc71" :
+              estado === "perdida" ? "#e74c3c" :
+              estado === "completada" ? "#2ecc71" : "#f39c12"}`,
+          }}>
+            {estado === "completada" ? "✅" :
+             estado === "ganada" ? "🏆" :
+             estado === "perdida" ? "❌" : "⏳"}
+            {estado}
+          </span>
+        )}
+      </td>
+      <td style={styles.td}>
+        {editando ? (
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <button onClick={guardar} style={{ ...styles.btnPrimary, padding: "0.3rem 0.6rem", fontSize: "0.8rem" }}>✓</button>
+            <button onClick={() => setEditando(false)} style={{ ...styles.btnLogout, padding: "0.3rem 0.6rem", fontSize: "0.8rem" }}>✕</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <button onClick={() => setEditando(true)} style={{ ...styles.btnVista, background: "#333", padding: "0.3rem 0.6rem", fontSize: "0.8rem" }}>✏️</button>
+            <button onClick={() => onDelete(bet.id)} style={{ ...styles.btnVista, background: "rgba(231,76,60,0.3)", padding: "0.3rem 0.6rem", fontSize: "0.8rem" }}>🗑</button>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+export default function App() {
+  const [token, setToken] = useState(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [pestana, setPestana] = useState("matching");
+  const [groups, setGroups] = useState([]);
+  const [oportunidades, setOportunidades] = useState([]);
+  const [bets, setBets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+  const [filtroLiga, setFiltroLiga] = useState("");
+  const [filtroBookie, setFiltroBookie] = useState("");
+  const [expandido, setExpandido] = useState({});
+  const [vistaExpandida, setVistaExpandida] = useState(false);
+  const [comision, setComision] = useState(2);
+  const [opSeleccionada, setOpSeleccionada] = useState(null);
+
+  async function login() {
+    setError("");
+    const form = new URLSearchParams();
+    form.append("username", username);
+    form.append("password", password);
+    const res = await fetch(`${API}/token`, { method: "POST", body: form });
+    if (!res.ok) { setError("Usuario o contraseña incorrectos"); return; }
+    const data = await res.json();
+    setToken(data.access_token);
+  }
+
+  async function fetchGroups(tok) {
+    try {
+      const res = await fetch(`${API}/events/grouped`, { headers: { Authorization: `Bearer ${tok}` } });
+      const data = await res.json();
+      setGroups(data.groups || []);
+    } catch { }
+  }
+
+  async function fetchMatching(tok, com) {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/odds/matching?comision=${com / 100}`, { headers: { Authorization: `Bearer ${tok}` } });
+      const data = await res.json();
+      setOportunidades(data.oportunidades || []);
+    } catch { }
+    finally { setLoading(false); }
+  }
+
+  async function fetchBets(tok) {
+    try {
+      const res = await fetch(`${API}/bets`, { headers: { Authorization: `Bearer ${tok}` } });
+      const data = await res.json();
+      setBets(data.bets || []);
+    } catch { }
+  }
+
+  async function syncReal() {
+    setSyncing(true); setSyncMsg("");
+    try {
+      const res = await fetch(`${API}/admin/sync-api-real`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setSyncMsg(`✅ Sync OK — ${data.inserted} eventos insertados`);
+      fetchGroups(token);
+      fetchMatching(token, comision);
+    } catch { setSyncMsg("❌ Error en el sync"); }
+    finally { setSyncing(false); }
+  }
+
+  async function updateBet(id, data) {
+    await fetch(`${API}/bets/${id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    fetchBets(token);
+  }
+
+  async function deleteBet(id) {
+    if (!confirm("¿Eliminar esta apuesta?")) return;
+    await fetch(`${API}/bets/${id}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+    });
+    fetchBets(token);
+  }
+
+  useEffect(() => {
+    if (token) {
+      fetchGroups(token);
+      fetchMatching(token, comision);
+      fetchBets(token);
     }
   }, [token]);
 
-  // =========================
-  // BUILD URL WITH FILTERS
-  // =========================
-  const buildEventsUrl = useCallback(
-    (offsetToUse = 0, appendLimit = limit) => {
-      const params = new URLSearchParams();
+  function getRatingColor(rating) {
+    if (rating >= 100) return "#2ecc71";
+    if (rating >= 90) return "#f39c12";
+    return "#e74c3c";
+  }
 
-      params.set("limit", appendLimit);
-      params.set("offset", offsetToUse);
+  function getRatingBg(rating) {
+    if (rating >= 100) return "rgba(46,204,113,0.05)";
+    if (rating >= 90) return "rgba(243,156,18,0.05)";
+    return "rgba(231,76,60,0.05)";
+  }
 
-      if (selectedDeporte) {
-        params.set("deporte", selectedDeporte);
-      }
+  const ligas = [...new Set(groups.map(g => g.competicion))].sort();
+  const bookies = [...new Set(groups.flatMap(g => g.bookies.map(b => b.bookie)))].sort();
+  const groupsFiltrados = groups.filter(g => (!filtroLiga || g.competicion === filtroLiga) && (!filtroBookie || g.bookies.some(b => b.bookie === filtroBookie)));
+  const opsFiltradas = oportunidades.filter(o => (!filtroLiga || o.competicion === filtroLiga) && (!filtroBookie || o.bookie === filtroBookie));
 
-      if (selectedBookie) {
-        params.set("bookie", selectedBookie);
-      }
-      if (selectedMercado) {
-        params.set("mercado", selectedMercado);
-      }
-      if (selectedCompeticion.trim()) {
-        params.set("competicion", selectedCompeticion.trim());
-      }
+  const totalNeto = bets.reduce((acc, b) => acc + (b.resultado_real ?? b.resultado_estimado ?? 0), 0);
 
-      if (selectedPartido.trim()) {
-        params.set("partido", selectedPartido.trim());
-      }
-
-      return `${API_URL}/events?${params.toString()}`;
-    },
-    [
-      limit,
-      selectedDeporte,
-      selectedBookie,
-      selectedMercado,
-      selectedCompeticion,
-      selectedPartido,
-    ]
-  );
-
-  // =========================
-  // LOAD EVENTS
-  // =========================
-  const loadEvents = useCallback(
-    async (offsetToUse = 0, append = false) => {
-      if (!token || loadingEventsRef.current) return;
-
-      loadingEventsRef.current = true;
-      setLoadingEvents(true);
-      setError("");
-
-      try {
-        const url = buildEventsUrl(offsetToUse, limit);
-        console.log("Cargando:", url);
-
-        const res = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const contentType = res.headers.get("content-type") || "";
-        console.log("STATUS:", res.status, "CONTENT-TYPE:", contentType);
-
-        if (!res.ok) {
-          throw new Error("No se pudieron cargar los eventos");
-        }
-
-        const data = await res.json();
-        console.log("DATA:", data);
-
-        const newEvents = Array.isArray(data.events) ? data.events : [];
-
-        setItems((prev) => (append ? [...prev, ...newEvents] : newEvents));
-        setTotal(data.total || 0);
-
-        const newOffset = offsetToUse + newEvents.length;
-        setNextOffset(newOffset);
-
-        setHasMore(newOffset < (data.total || 0));
-      } catch (err) {
-        console.error("Error cargando eventos:", err);
-        setError(err.message || "Error cargando eventos");
-      } finally {
-        loadingEventsRef.current = false;
-        setLoadingEvents(false);
-      }
-    },
-    [token, limit, buildEventsUrl]
-  );
-
-  // =========================
-  // RESET + RELOAD
-  // =========================
-  const resetAndLoad = useCallback(async () => {
-    setItems([]);
-    setTotal(0);
-    setNextOffset(0);
-    setHasMore(true);
-    await loadEvents(0, false);
-  }, [loadEvents]);
-
-  const clearFilters = () => {
-    setSelectedDeporte("");
-    setSelectedBookie("");
-    setSelectedMercado("");
-    setCompeticionInput("");
-    setPartidoInput("");
-    setSelectedCompeticion("");
-    setSelectedPartido("");
-  };
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSelectedCompeticion(competicionInput.trim());
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, [competicionInput]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSelectedPartido(partidoInput.trim());
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, [partidoInput]);
-
-  // =========================
-  // INITIAL AUTH CHECK
-  // =========================
-  useEffect(() => {
-    if (token) {
-      fetchMe(token);
-    }
-  }, [token, fetchMe]);
-
-  // =========================
-  // LOAD FILTERS WHEN TOKEN READY
-  // =========================
-  useEffect(() => {
-    if (token) {
-      loadFilters();
-    }
-  }, [token, loadFilters]);
-
-  // =========================
-  // FIRST LOAD / RELOAD WHEN FILTERS CHANGE
-  // =========================
-  useEffect(() => {
-    if (!token) return;
-    resetAndLoad();
-  }, [
-    token,
-    limit,
-    selectedDeporte,
-    selectedBookie,
-    selectedCompeticion,
-    selectedPartido,
-    resetAndLoad,
-  ]);
-
-  // =========================
-  // INFINITE SCROLL
-  // =========================
-  useEffect(() => {
-    if (!token) return;
-    if (!sentinelRef.current) return;
-
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-    }
-
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        const first = entries[0];
-        if (
-          first.isIntersecting &&
-          hasMore &&
-          !loadingEvents &&
-          items.length > 0
-        ) {
-          loadEvents(nextOffset, true);
-        }
-      },
-      {
-        root: null,
-        rootMargin: "200px",
-        threshold: 0.1,
-      }
+  if (!token) {
+    return (
+      <div style={styles.loginPage}>
+        <div style={styles.loginBox}>
+          <h1 style={styles.title}>Oddsmatcher</h1>
+          <input placeholder="Usuario" value={username}
+            onChange={e => setUsername(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && login()} style={styles.input} />
+          <input type="password" placeholder="Contraseña" value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && login()} style={styles.input} />
+          <button onClick={login} style={styles.btnPrimary}>Entrar</button>
+          {error && <p style={{ color: "#ff6b6b", marginTop: "0.5rem" }}>{error}</p>}
+        </div>
+      </div>
     );
-
-    observerRef.current.observe(sentinelRef.current);
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [token, hasMore, loadingEvents, nextOffset, loadEvents, items.length]);
+  }
 
   return (
-    <div style={{ padding: "24px", fontFamily: "Arial, sans-serif" }}>
-      <h1>Oddsmatcher</h1>
-
-      {!token ? (
-        <form onSubmit={handleLogin} style={{ marginBottom: "24px" }}>
-          <div style={{ marginBottom: "8px" }}>
-            <input
-              type="text"
-              placeholder="Usuario"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-          <div style={{ marginBottom: "8px" }}>
-            <input
-              type="password"
-              placeholder="Contraseña"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <button type="submit">Entrar</button>
-        </form>
-      ) : (
-        <>
-          <div style={{ marginBottom: "16px" }}>
-            <strong>Sesión iniciada</strong>
-            {user && (
-              <span style={{ marginLeft: "12px" }}>
-                Usuario: {user.username} | Rol: {user.role}
-              </span>
-            )}
-            <button onClick={handleLogout} style={{ marginLeft: "12px" }}>
-              Logout
-            </button>
-          </div>
-
-          <div
-            style={{
-              marginBottom: "20px",
-              padding: "16px",
-              border: "1px solid #444",
-              borderRadius: "8px",
-            }}
-          >
-            <h3>Filtros</h3>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "12px",
-                marginBottom: "12px",
-              }}
-            >
-              <div>
-                <label>Deporte</label>
-                <br />
-                <select
-                  value={selectedDeporte}
-                  onChange={(e) => setSelectedDeporte(e.target.value)}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Todos</option>
-                  {filterOptions.deportes.map((dep) => (
-                    <option key={dep} value={dep}>
-                      {dep}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label>Bookie</label>
-                <br />
-                <select
-                  value={selectedBookie}
-                  onChange={(e) => setSelectedBookie(e.target.value)}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Todos</option>
-                  {filterOptions.bookies.map((bookie) => (
-                    <option key={bookie} value={bookie}>
-                      {bookie}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label>Mercado</label>
-                <br />
-                <select
-                  value={selectedMercado}
-                  onChange={(e) => setSelectedMercado(e.target.value)}
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Todos</option>
-                  {filterOptions.mercados.map((mercado) => (
-                    <option key={mercado} value={mercado}>
-                      {mercado}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label>Competición</label>
-                <br />
-                <input
-                  type="text"
-                  value={competicionInput}
-                  onChange={(e) => setCompeticionInput(e.target.value)}
-                  placeholder="Buscar competición..."
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div>
-                <label>Partido</label>
-                <br />
-                <input
-                  type="text"
-                  value={partidoInput}
-                  onChange={(e) => setPartidoInput(e.target.value)}
-                  placeholder="Buscar partido..."
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div>
-                <label>Límite</label>
-                <br />
-                <select
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value))}
-                  style={{ width: "100%" }}
-                >
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                  <option value={500}>500</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button onClick={resetAndLoad} disabled={loadingEvents}>
-                Recargar desde 0
-              </button>
-              <button onClick={clearFilters} disabled={loadingEvents}>
-                Limpiar filtros
-              </button>
-            </div>
-
-            <div style={{ marginTop: "10px", fontSize: "14px" }}>
-              {loadingFilters ? "Cargando filtros..." : "Filtros listos"}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: "16px" }}>
-            <strong>Cargados:</strong> {items.length} / {total}
-            <span style={{ marginLeft: "12px" }}>
-              <strong>Offset siguiente:</strong> {nextOffset}
-            </span>
-            <span style={{ marginLeft: "12px" }}>
-              <strong>Has more:</strong> {hasMore ? "Sí" : "No"}
-            </span>
-          </div>
-
-          <div style={{ overflowX: "auto" }}>
-            <table
-              border="1"
-              cellPadding="8"
-              style={{ borderCollapse: "collapse", width: "100%" }}
-            >
-              <thead>
-                <tr>
-                  <th>Bookie</th>
-                  <th>Competición</th>
-                  <th>Partido</th>
-                  <th>Mercados</th>
-                  <th>Deporte</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((e, idx) => (
-                  <tr key={e.id || `${e.bookie}-${e.partido}-${idx}`}>
-                    <td>{e.bookie}</td>
-                    <td>{e.competicion}</td>
-                    <td>{e.partido}</td>
-                    <td>
-                      {Array.isArray(e.mercados)
-                        ? e.mercados.join(", ")
-                        : typeof e.mercados === "string"
-                          ? e.mercados
-                            .split(",")
-                            .map((m) => m.trim())
-                            .filter(Boolean)
-                            .join(", ")
-                          : ""}
-                    </td>
-                    <td>{e.deporte}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div
-            ref={sentinelRef}
-            style={{
-              height: "40px",
-              marginTop: "16px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {loadingEvents
-              ? "Cargando más eventos..."
-              : hasMore
-                ? "Scroll para seguir cargando"
-                : "No hay más resultados"}
-          </div>
-        </>
+    <div style={styles.page}>
+      {opSeleccionada && (
+        <Calculadora
+          op={opSeleccionada}
+          comision={comision}
+          token={token}
+          onClose={() => setOpSeleccionada(null)}
+          onGuardado={() => fetchBets(token)}
+        />
       )}
 
-      {error && (
-        <div style={{ marginTop: "16px", color: "red" }}>
-          <strong>Error:</strong> {error}
+      <div style={styles.header}>
+        <div style={{ display: "flex", alignItems: "center", gap: "1.5rem" }}>
+          <h2 style={{ margin: 0 }}>⚽ Oddsmatcher</h2>
+          <div style={styles.tabs}>
+            <button onClick={() => setPestana("matching")} style={{ ...styles.tab, ...(pestana === "matching" ? styles.tabActive : {}) }}>🎯 Matching</button>
+            <button onClick={() => setPestana("eventos")} style={{ ...styles.tab, ...(pestana === "eventos" ? styles.tabActive : {}) }}>📋 Eventos</button>
+            <button onClick={() => { setPestana("ledger"); fetchBets(token); }} style={{ ...styles.tab, ...(pestana === "ledger" ? styles.tabActive : {}) }}>
+              📒 Mis apuestas {bets.length > 0 && <span style={{ marginLeft: "0.3rem", background: "#646cff", borderRadius: "10px", padding: "0 0.4rem", fontSize: "0.75rem" }}>{bets.length}</span>}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+          <button onClick={syncReal} disabled={syncing} style={styles.btnSync}>
+            {syncing ? "Sincronizando..." : "🔄 Sync API"}
+          </button>
+          <button onClick={() => setToken(null)} style={styles.btnLogout}>Salir</button>
+        </div>
+      </div>
+
+      {syncMsg && <p style={styles.syncMsg}>{syncMsg}</p>}
+
+      {pestana !== "ledger" && (
+        <div style={styles.filtros}>
+          <select value={filtroLiga} onChange={e => setFiltroLiga(e.target.value)} style={styles.select}>
+            <option value="">Todas las ligas</option>
+            {ligas.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select value={filtroBookie} onChange={e => setFiltroBookie(e.target.value)} style={styles.select}>
+            <option value="">Todos los bookies</option>
+            {bookies.filter(b => b !== "betfair").map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          {pestana === "matching" && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginLeft: "auto" }}>
+              <label style={{ color: "#aaa", fontSize: "0.9rem" }}>Comisión Betfair:</label>
+              <input type="number" value={comision} min="0" max="10" step="0.1"
+                onChange={e => setComision(parseFloat(e.target.value))}
+                style={{ ...styles.input, width: "60px", padding: "0.3rem 0.5rem", textAlign: "center" }} />
+              <span style={{ color: "#aaa" }}>%</span>
+              <button onClick={() => fetchMatching(token, comision)}
+                style={{ ...styles.btnPrimary, padding: "0.3rem 0.8rem", fontSize: "0.85rem" }}>Aplicar</button>
+            </div>
+          )}
+          {pestana === "eventos" && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
+              <button onClick={() => setVistaExpandida(false)} style={{ ...styles.btnVista, background: !vistaExpandida ? "#646cff" : "#333" }}>🖱 Click para expandir</button>
+              <button onClick={() => setVistaExpandida(true)} style={{ ...styles.btnVista, background: vistaExpandida ? "#646cff" : "#333" }}>📋 Todo expandido</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <p style={{ color: "#aaa", textAlign: "center", marginTop: "3rem" }}>Cargando...</p>
+      ) : pestana === "matching" ? (
+        <div style={styles.tableWrapper}>
+          <p style={{ color: "#aaa", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+            {opsFiltradas.length} oportunidades — haz clic en una fila para calcular
+          </p>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Rating</th>
+                <th style={styles.th}>Fecha</th>
+                <th style={styles.th}>Partido</th>
+                <th style={styles.th}>Outcome</th>
+                <th style={styles.th}>Mercado</th>
+                <th style={styles.th}>Bookie</th>
+                <th style={styles.th}>Back</th>
+                <th style={styles.th}>Lay</th>
+                <th style={styles.th}>Resultado neto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opsFiltradas.map((o, i) => (
+                <tr key={i} style={{ background: getRatingBg(o.rating), cursor: "pointer" }}
+                  onClick={() => setOpSeleccionada(o)}>
+                  <td style={{ ...styles.td, textAlign: "center" }}>
+                    <span style={{ color: getRatingColor(o.rating), fontWeight: "bold", fontSize: "1rem" }}>{o.rating}%</span>
+                  </td>
+                  <td style={{ ...styles.td, fontSize: "0.85rem", color: "#aaa", whiteSpace: "nowrap" }}>{formatFecha(o.commence_time)}</td>
+                  <td style={styles.td}>
+                    <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{o.competicion}</div>
+                    <div>{o.partido}</div>
+                  </td>
+                  <td style={{ ...styles.td, fontWeight: "bold" }}>{o.outcome}</td>
+                  <td style={styles.td}><span style={styles.mercadoBadge}>{o.mercado}</span></td>
+                  <td style={styles.td}>{o.bookie}</td>
+                  <td style={{ ...styles.td, color: "#2ecc71", fontWeight: "bold" }}>{o.back_odds}</td>
+                  <td style={{ ...styles.td, color: "#e74c3c", fontWeight: "bold" }}>{o.lay_odds}</td>
+                  <td style={{ ...styles.td, color: o.resultado_neto >= 0 ? "#2ecc71" : "#e74c3c", fontWeight: "bold" }}>
+                    {o.resultado_neto >= 0 ? "+" : ""}{o.resultado_neto}€
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : pestana === "eventos" ? (
+        <div style={styles.tableWrapper}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Liga</th>
+                <th style={styles.th}>Partido</th>
+                <th style={styles.th}>Bookies y cuotas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupsFiltrados.map((g, i) => {
+                const key = `${g.competicion}||${g.partido}`;
+                const abierto = vistaExpandida || !!expandido[key];
+                return (
+                  <tr key={i} style={i % 2 === 0 ? styles.trEven : styles.trOdd}>
+                    <td style={styles.td}>{g.competicion}</td>
+                    <td style={{ ...styles.td, cursor: !vistaExpandida ? "pointer" : "default" }}
+                      onClick={() => !vistaExpandida && setExpandido(prev => ({ ...prev, [key]: !prev[key] }))}>
+                      {g.partido}
+                      {!vistaExpandida && <span style={{ marginLeft: "0.5rem", color: "#646cff", fontSize: "0.8rem" }}>{abierto ? "▲" : "▼"}</span>}
+                    </td>
+                    <td style={styles.td}>
+                      {!abierto ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                          {g.bookies.map((b, j) => (
+                            <span key={j} style={styles.bookieBadge}><strong>{b.bookie}</strong>: {b.mercados.join(", ")}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                          {g.bookies.map((b, j) => (
+                            <div key={j} style={styles.bookieCard}>
+                              <strong style={{ color: "#646cff" }}>{b.bookie}</strong>
+                              {Object.entries(b.cuotas).map(([mercado, outcomes]) => (
+                                <div key={mercado} style={{ marginTop: "0.4rem" }}>
+                                  <span style={styles.mercadoLabel}>{mercado}</span>
+                                  <div style={styles.outcomesRow}>
+                                    {Object.entries(outcomes).map(([equipo, cuota]) => (
+                                      <div key={equipo} style={styles.outcomeBox}>
+                                        <span style={styles.outcomeEquipo}>{equipo}</span>
+                                        <span style={styles.outcomeCuota}>{cuota}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* LEDGER */
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <p style={{ color: "#aaa", margin: 0 }}>{bets.length} apuestas registradas</p>
+            <div style={{
+              background: totalNeto >= 0 ? "rgba(46,204,113,0.1)" : "rgba(231,76,60,0.1)",
+              border: `1px solid ${totalNeto >= 0 ? "#2ecc71" : "#e74c3c"}`,
+              borderRadius: "8px", padding: "0.5rem 1rem",
+            }}>
+              <span style={{ color: "#aaa", fontSize: "0.85rem" }}>P&L Total: </span>
+              <span style={{ color: totalNeto >= 0 ? "#2ecc71" : "#e74c3c", fontWeight: "bold", fontSize: "1.1rem" }}>
+                {totalNeto >= 0 ? "+" : ""}{totalNeto.toFixed(2)}€
+              </span>
+            </div>
+          </div>
+          {bets.length === 0 ? (
+            <p style={{ color: "#aaa", textAlign: "center", marginTop: "3rem" }}>
+              No tienes apuestas registradas. Ve a 🎯 Matching y guarda una apuesta.
+            </p>
+          ) : (
+            <div style={styles.tableWrapper}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Fecha registro</th>
+                    <th style={styles.th}>Tipo</th>
+                    <th style={styles.th}>Notas</th>
+                    <th style={styles.th}>Partido / Outcome</th>
+                    <th style={styles.th}>Fecha evento</th>
+                    <th style={styles.th}>Bookie</th>
+                    <th style={styles.th}>Back</th>
+                    <th style={styles.th}>Lay</th>
+                    <th style={styles.th}>Stake</th>
+                    <th style={styles.th}>Lay stake</th>
+                    <th style={styles.th}>Resultado</th>
+                    <th style={styles.th}>Estado</th>
+                    <th style={styles.th}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bets.map(bet => (
+                    <FilaLedger key={bet.id} bet={bet} onUpdate={updateBet} onDelete={deleteBet} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export default App;
+const styles = {
+  loginPage: { background: "#1a1a1a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" },
+  loginBox: { display: "flex", flexDirection: "column", gap: "0.75rem", background: "#2a2a2a", padding: "2rem", borderRadius: "12px", minWidth: "300px" },
+  title: { margin: 0, color: "white", fontSize: "1.8rem" },
+  input: { padding: "0.6rem", borderRadius: "6px", border: "1px solid #444", background: "#1a1a1a", color: "white", fontSize: "1rem" },
+  btnPrimary: { padding: "0.6rem", background: "#646cff", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "bold" },
+  page: { background: "#1a1a1a", minHeight: "100vh", color: "white", padding: "1rem 2rem" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid #333", paddingBottom: "1rem" },
+  tabs: { display: "flex", gap: "0.5rem" },
+  tab: { background: "transparent", color: "#aaa", border: "1px solid #333", borderRadius: "6px", padding: "0.4rem 1rem", cursor: "pointer", fontSize: "0.9rem" },
+  tabActive: { background: "#2a2a2a", color: "white", borderColor: "#646cff" },
+  btnSync: { background: "#2ecc71", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer", fontWeight: "bold" },
+  btnLogout: { background: "#444", color: "white", border: "none", borderRadius: "6px", padding: "0.5rem 1rem", cursor: "pointer" },
+  btnVista: { color: "white", border: "none", borderRadius: "6px", padding: "0.4rem 0.8rem", cursor: "pointer", fontSize: "0.85rem" },
+  btnCerrar: { background: "transparent", color: "#aaa", border: "none", fontSize: "1.2rem", cursor: "pointer", padding: "0.2rem 0.5rem" },
+  syncMsg: { background: "#2a2a2a", padding: "0.5rem 1rem", borderRadius: "6px", marginBottom: "1rem" },
+  filtros: { display: "flex", gap: "1rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap" },
+  select: { padding: "0.5rem", borderRadius: "6px", border: "1px solid #444", background: "#2a2a2a", color: "white", fontSize: "0.9rem" },
+  tableWrapper: { overflowX: "auto" },
+  table: { width: "100%", borderCollapse: "collapse" },
+  th: { background: "#2a2a2a", padding: "0.75rem 1rem", textAlign: "left", borderBottom: "2px solid #444", color: "#aaa", fontSize: "0.85rem", textTransform: "uppercase" },
+  td: { padding: "0.75rem 1rem", verticalAlign: "top", borderBottom: "1px solid #2a2a2a" },
+  trEven: { background: "#1e1e1e" },
+  trOdd: { background: "#222" },
+  mercadoBadge: { background: "#2a2a2a", border: "1px solid #444", borderRadius: "4px", padding: "0.2rem 0.5rem", fontSize: "0.8rem" },
+  bookieBadge: { background: "#2a2a2a", border: "1px solid #444", borderRadius: "4px", padding: "0.2rem 0.5rem", fontSize: "0.8rem", whiteSpace: "nowrap" },
+  bookieCard: { background: "#2a2a2a", border: "1px solid #333", borderRadius: "8px", padding: "0.6rem 0.8rem" },
+  mercadoLabel: { fontSize: "0.75rem", color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: "0.3rem" },
+  outcomesRow: { display: "flex", gap: "0.5rem", flexWrap: "wrap" },
+  outcomeBox: { background: "#1a1a1a", border: "1px solid #444", borderRadius: "6px", padding: "0.3rem 0.6rem", display: "flex", flexDirection: "column", alignItems: "center", minWidth: "80px" },
+  outcomeEquipo: { fontSize: "0.75rem", color: "#aaa", marginBottom: "0.1rem" },
+  outcomeCuota: { fontSize: "1rem", fontWeight: "bold", color: "#2ecc71" },
+  modalOverlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  modalBox: { background: "#2a2a2a", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "600px", border: "1px solid #444" },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", borderBottom: "1px solid #333", paddingBottom: "1rem" },
+  modalGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" },
+  modalField: { display: "flex", flexDirection: "column", gap: "0.4rem" },
+  modalLabel: { color: "#aaa", fontSize: "0.85rem" },
+  modalInput: { padding: "0.6rem", borderRadius: "6px", border: "1px solid #444", background: "#1a1a1a", color: "white", fontSize: "1.1rem", fontWeight: "bold" },
+  resultadosGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" },
+  resultadoBox: { background: "#1a1a1a", border: "1px solid #333", borderRadius: "8px", padding: "0.75rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.3rem" },
+  resultadoLabel: { color: "#aaa", fontSize: "0.75rem", textAlign: "center" },
+  resultadoValor: { fontWeight: "bold", fontSize: "1.1rem", color: "white" },
+};

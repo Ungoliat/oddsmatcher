@@ -27,3 +27,7 @@ venv/
 __pycache__/
 node_modules/
 dist/
+
+# Scripts temporales
+backend/create_bets_table.py
+backend/add_tipo_column.py
