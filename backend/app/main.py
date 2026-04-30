@@ -358,6 +358,98 @@ def sync_api_real(
     result = sync_events_from_provider(db=db, provider=provider)
     return result
 
+@app.get("/odds/dutcher3")
+def get_dutcher3(
+    db: Session = Depends(get_db),
+    _: UserPublic = Depends(require_role("pro", "admin")),
+):
+    from app.repositories.events_repo import get_grouped_events
+
+    data = get_grouped_events(db=db)
+    groups = data.get("groups", [])
+
+    oportunidades = []
+
+    for group in groups:
+        partido = group["partido"]
+        competicion = group["competicion"]
+        commence_time = group.get("commence_time")
+        bookies = group["bookies"]
+
+        best_1 = {"cuota": 0, "bookie": None}
+        best_x = {"cuota": 0, "bookie": None}
+        best_2 = {"cuota": 0, "bookie": None}
+
+        for b in bookies:
+            bookie = b["bookie"]
+            cuotas = b.get("cuotas", {})
+            mercado_1x2 = cuotas.get("1X2", {})
+
+            if not mercado_1x2:
+                continue
+
+            outcomes_list = list(mercado_1x2.items())
+            for idx, (outcome, cuota) in enumerate(outcomes_list):
+                outcome_lower = str(outcome).lower()
+                is_home = outcome_lower in ("home", "1") or idx == 0
+                is_draw = outcome_lower in ("draw", "x") or idx == 1
+                is_away = outcome_lower in ("away", "2") or idx == 2
+
+                if is_home and not is_draw and not is_away and cuota > best_1["cuota"]:
+                    best_1 = {"cuota": cuota, "bookie": bookie}
+                elif is_draw and cuota > best_x["cuota"]:
+                    best_x = {"cuota": cuota, "bookie": bookie}
+                elif is_away and not is_home and cuota > best_2["cuota"]:
+                    best_2 = {"cuota": cuota, "bookie": bookie}
+
+        if not best_1["bookie"] or not best_x["bookie"] or not best_2["bookie"]:
+            continue
+
+        margen = (1 / best_1["cuota"]) + (1 / best_x["cuota"]) + (1 / best_2["cuota"])
+        beneficio_pct = (1 - margen) * 100
+        stake_total = 100
+        stake_1 = round((stake_total / best_1["cuota"]) / margen, 2)
+        stake_x = round((stake_total / best_x["cuota"]) / margen, 2)
+        stake_2 = round((stake_total / best_2["cuota"]) / margen, 2)
+        retorno = round(stake_total / margen, 2)
+        beneficio_neto = round(retorno - stake_total, 2)
+
+        oportunidades.append({
+            "competicion": competicion,
+            "partido": partido,
+            "commence_time": commence_time,
+            "margen": round(margen * 100, 2),
+            "beneficio_pct": round(beneficio_pct, 2),
+            "beneficio_neto": beneficio_neto,
+            "retorno": retorno,
+            "stake_total": stake_total,
+            "outcome_1": {
+                "outcome": "1 (local)",
+                "bookie": best_1["bookie"],
+                "cuota": best_1["cuota"],
+                "stake": stake_1,
+            },
+            "outcome_x": {
+                "outcome": "X (empate)",
+                "bookie": best_x["bookie"],
+                "cuota": best_x["cuota"],
+                "stake": stake_x,
+            },
+            "outcome_2": {
+                "outcome": "2 (visitante)",
+                "bookie": best_2["bookie"],
+                "cuota": best_2["cuota"],
+                "stake": stake_2,
+            },
+        })
+
+    oportunidades.sort(key=lambda x: x["beneficio_pct"], reverse=True)
+
+    return {
+        "total": len(oportunidades),
+        "oportunidades": oportunidades,
+    }
+    
 @app.post("/admin/sync-oddspapi")
 def sync_oddspapi(
     _: UserPublic = Depends(require_role("admin")),

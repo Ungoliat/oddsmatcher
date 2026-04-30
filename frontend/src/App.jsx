@@ -281,6 +281,7 @@ export default function App() {
   const [groups, setGroups] = useState([]);
   const [oportunidades, setOportunidades] = useState([]);
   const [bets, setBets] = useState([]);
+  const [dutcher3, setDutcher3] = useState([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
@@ -327,6 +328,18 @@ export default function App() {
       setBets(data.bets || []);
     } catch { }
   }
+
+async function fetchDutcher3(tok) {
+  setLoading(true);
+  try {
+    const res = await fetch(`${API}/odds/dutcher3`, {
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    const data = await res.json();
+    setDutcher3(data.oportunidades || []);
+  } catch { }
+  finally { setLoading(false); }
+}
 
   async function syncReal() {
     setSyncing(true); setSyncMsg("");
@@ -379,11 +392,18 @@ export default function App() {
     return "rgba(231,76,60,0.05)";
   }
 
+  function getMargenColor(pct) {
+  if (pct > 0) return "#2ecc71";
+  if (pct > -5) return "#f39c12";
+  return "#e74c3c";
+}
+
   const ligas = [...new Set(groups.map(g => g.competicion))].sort();
   const bookies = [...new Set(groups.flatMap(g => g.bookies.map(b => b.bookie)))].sort();
   const groupsFiltrados = groups.filter(g => (!filtroLiga || g.competicion === filtroLiga) && (!filtroBookie || g.bookies.some(b => b.bookie === filtroBookie)));
   const opsFiltradas = oportunidades.filter(o => (!filtroLiga || o.competicion === filtroLiga) && (!filtroBookie || o.bookie === filtroBookie));
 
+  const dutcher3Filtradas = dutcher3.filter(o => !filtroLiga || o.competicion === filtroLiga);
   const totalNeto = bets.reduce((acc, b) => acc + (b.resultado_real ?? b.resultado_estimado ?? 0), 0);
 
   if (!token) {
@@ -424,6 +444,9 @@ export default function App() {
             <button onClick={() => setPestana("eventos")} style={{ ...styles.tab, ...(pestana === "eventos" ? styles.tabActive : {}) }}>📋 Eventos</button>
             <button onClick={() => { setPestana("ledger"); fetchBets(token); }} style={{ ...styles.tab, ...(pestana === "ledger" ? styles.tabActive : {}) }}>
               📒 Mis apuestas {bets.length > 0 && <span style={{ marginLeft: "0.3rem", background: "#646cff", borderRadius: "10px", padding: "0 0.4rem", fontSize: "0.75rem" }}>{bets.length}</span>}
+            </button>
+            <button onClick={() => { setPestana("dutcher3"); fetchDutcher3(token); }} style={{ ...styles.tab, ...(pestana === "dutcher3" ? styles.tabActive : {}) }}>
+             🎲 Dutcher 3B
             </button>
           </div>
         </div>
@@ -568,6 +591,62 @@ export default function App() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      ) : pestana === "dutcher3" ? (
+        <div style={styles.tableWrapper}>
+          <p style={{ color: "#aaa", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+            {dutcher3Filtradas.length} partidos — stake total de referencia: 100€
+          </p>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Beneficio</th>
+                <th style={styles.th}>Fecha</th>
+                <th style={styles.th}>Partido</th>
+                <th style={styles.th}>1 (local)</th>
+                <th style={styles.th}>X (empate)</th>
+                <th style={styles.th}>2 (visitante)</th>
+                <th style={styles.th}>Retorno</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dutcher3Filtradas.map((o, i) => (
+                <tr key={i} style={{ background: o.beneficio_pct > 0 ? "rgba(46,204,113,0.05)" : "rgba(231,76,60,0.03)" }}>
+                  <td style={{ ...styles.td, textAlign: "center" }}>
+                    <span style={{ color: getMargenColor(o.beneficio_pct), fontWeight: "bold", fontSize: "1rem" }}>
+                      {o.beneficio_pct > 0 ? "+" : ""}{o.beneficio_pct}%
+                    </span>
+                    <div style={{ fontSize: "0.8rem", color: getMargenColor(o.beneficio_pct) }}>
+                      {o.beneficio_neto > 0 ? "+" : ""}{o.beneficio_neto}€
+                    </div>
+                  </td>
+                  <td style={{ ...styles.td, fontSize: "0.85rem", color: "#aaa", whiteSpace: "nowrap" }}>{formatFecha(o.commence_time)}</td>
+                  <td style={styles.td}>
+                    <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{o.competicion}</div>
+                    <div>{o.partido}</div>
+                  </td>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: "bold", color: "#2ecc71" }}>{o.outcome_1.cuota}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{o.outcome_1.bookie}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#646cff" }}>{o.outcome_1.stake}€</div>
+                  </td>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: "bold", color: "#2ecc71" }}>{o.outcome_x.cuota}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{o.outcome_x.bookie}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#646cff" }}>{o.outcome_x.stake}€</div>
+                  </td>
+                  <td style={styles.td}>
+                    <div style={{ fontWeight: "bold", color: "#2ecc71" }}>{o.outcome_2.cuota}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#aaa" }}>{o.outcome_2.bookie}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#646cff" }}>{o.outcome_2.stake}€</div>
+                  </td>
+                  <td style={{ ...styles.td, fontWeight: "bold", color: o.beneficio_neto > 0 ? "#2ecc71" : "#aaa" }}>
+                    {o.retorno}€
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
