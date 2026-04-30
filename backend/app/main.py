@@ -358,6 +358,16 @@ def sync_api_real(
     result = sync_events_from_provider(db=db, provider=provider)
     return result
 
+@app.post("/admin/sync-oddspapi")
+def sync_oddspapi(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.providers.oddspapi_provider import OddsPapiProvider
+    from app.services.sync_service_oddspapi import sync_events_from_oddspapi
+    result = sync_events_from_oddspapi(db=db, provider=OddsPapiProvider())
+    return result
+
 @app.get("/odds/matching")
 def get_matching_odds(
     comision: float = 0.02,
