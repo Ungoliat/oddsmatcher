@@ -68,7 +68,7 @@ function Calculadora({ op, comision, token, onClose, onGuardado }) {
   }
 
   return (
-    <div style={styles.modalOverlay} onClick={onClose}>
+    <div style={{ ...styles.modalOverlay, padding: "1rem" }} onClick={onClose}>
       <div style={styles.modalBox} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <div>
@@ -272,6 +272,109 @@ function FilaLedger({ bet, onUpdate, onDelete }) {
     </tr>
   );
 }
+function CalculadoraDutcher3({ op, onClose }) {
+  const [stakeTotal, setStakeTotal] = useState(100);
+  const [cuota1, setCuota1] = useState(op.outcome_1.cuota);
+  const [cuotaX, setCuotaX] = useState(op.outcome_x.cuota);
+  const [cuota2, setCuota2] = useState(op.outcome_2.cuota);
+  const [com1, setCom1] = useState(0);
+  const [comX, setComX] = useState(0);
+  const [com2, setCom2] = useState(0);
+
+  const cuota1Net = cuota1 * (1 - com1 / 100);
+  const cuotaXNet = cuotaX * (1 - comX / 100);
+  const cuota2Net = cuota2 * (1 - com2 / 100);
+
+  const margen = (1 / cuota1Net) + (1 / cuotaXNet) + (1 / cuota2Net);
+  const stake1 = isFinite(margen) ? round2((stakeTotal / cuota1Net) / margen) : 0;
+  const stakeX = isFinite(margen) ? round2((stakeTotal / cuotaXNet) / margen) : 0;
+  const stake2 = isFinite(margen) ? round2((stakeTotal / cuota2Net) / margen) : 0;
+  const retorno = isFinite(margen) ? round2(stakeTotal / margen) : 0;
+  const beneficio = round2(retorno - stakeTotal);
+  const beneficioPct = isFinite(margen) ? round2((1 - margen) * 100) : 0;
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+
+  function getColor(n) {
+    if (n > 0) return "#2ecc71";
+    if (n > -5) return "#f39c12";
+    return "#e74c3c";
+  }
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={{ ...styles.modalBox, maxWidth: "650px", width: "calc(100% - 2rem)", boxSizing: "border-box" }} onClick={e => e.stopPropagation()}>
+        <div style={styles.modalHeader}>
+          <div>
+            <div style={{ color: "#aaa", fontSize: "0.85rem" }}>{op.competicion}</div>
+            <div style={{ fontWeight: "bold", fontSize: "1.1rem" }}>{op.partido}</div>
+            <div style={{ color: "#646cff", marginTop: "0.2rem" }}>Dutcher 3 Bandas</div>
+          </div>
+          <button onClick={onClose} style={styles.btnCerrar}>✕</button>
+        </div>
+
+        {/* Stake total */}
+        <div style={{ marginBottom: "1.5rem" }}>
+          <label style={styles.modalLabel}>💶 Stake total (€)</label>
+          <input type="number" value={stakeTotal} min="1"
+            onChange={e => setStakeTotal(parseFloat(e.target.value) || 0)}
+            style={{ ...styles.modalInput, width: "150px", marginTop: "0.4rem" }} />
+        </div>
+
+        {/* Grid de 3 outcomes */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.75rem", marginBottom: "1.5rem" }}>
+          {[
+            { label: "1 (Local)", bookie: op.outcome_1.bookie, cuota: cuota1, setCuota: setCuota1, com: com1, setCom: setCom1, stake: stake1 },
+            { label: "X (Empate)", bookie: op.outcome_x.bookie, cuota: cuotaX, setCuota: setCuotaX, com: comX, setCom: setComX, stake: stakeX },
+            { label: "2 (Visitante)", bookie: op.outcome_2.bookie, cuota: cuota2, setCuota: setCuota2, com: com2, setCom: setCom2, stake: stake2 },
+          ].map((o, i) => (
+            <div key={i} style={{ background: "#1a1a1a", border: "1px solid #333", borderRadius: "8px", padding: "1rem" }}>
+              <div style={{ fontWeight: "bold", color: "#646cff", marginBottom: "0.5rem" }}>{o.label}</div>
+              <div style={{ color: "#aaa", fontSize: "0.8rem", marginBottom: "0.75rem" }}>{o.bookie}</div>
+              <div style={styles.modalField}>
+                <label style={styles.modalLabel}>Cuota</label>
+                <input type="number" value={o.cuota} min="1" step="0.01"
+                  onChange={e => o.setCuota(parseFloat(e.target.value) || 0)}
+                  style={{ ...styles.modalInput, borderColor: "#2ecc71", fontSize: "1rem" }} />
+              </div>
+              <div style={{ ...styles.modalField, marginTop: "0.5rem" }}>
+                <label style={styles.modalLabel}>Comisión (%)</label>
+                <input type="number" value={o.com} min="0" max="10" step="0.1"
+                  onChange={e => o.setCom(parseFloat(e.target.value) || 0)}
+                  style={{ ...styles.modalInput, fontSize: "1rem" }} />
+              </div>
+              <div style={{ marginTop: "0.75rem", textAlign: "center" }}>
+                <div style={{ color: "#aaa", fontSize: "0.75rem" }}>Stake</div>
+                <div style={{ fontWeight: "bold", color: "#646cff", fontSize: "1.1rem" }}>{o.stake}€</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Resultados */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
+          <div style={styles.resultadoBox}>
+            <span style={styles.resultadoLabel}>Retorno garantizado</span>
+            <span style={{ ...styles.resultadoValor, color: "#2ecc71" }}>{retorno}€</span>
+          </div>
+          <div style={styles.resultadoBox}>
+            <span style={styles.resultadoLabel}>Beneficio neto</span>
+            <span style={{ ...styles.resultadoValor, color: getColor(beneficio) }}>
+              {beneficio >= 0 ? "+" : ""}{beneficio}€
+            </span>
+          </div>
+          <div style={{ ...styles.resultadoBox, background: "rgba(100,108,255,0.1)", border: "1px solid #646cff" }}>
+            <span style={styles.resultadoLabel}>% Beneficio</span>
+            <span style={{ ...styles.resultadoValor, color: getColor(beneficioPct), fontSize: "1.5rem" }}>
+              {beneficioPct >= 0 ? "+" : ""}{beneficioPct}%
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [token, setToken] = useState(null);
   const [username, setUsername] = useState("");
@@ -291,6 +394,7 @@ export default function App() {
   const [vistaExpandida, setVistaExpandida] = useState(false);
   const [comision, setComision] = useState(2);
   const [opSeleccionada, setOpSeleccionada] = useState(null);
+  const [dutcher3Seleccionada, setDutcher3Seleccionada] = useState(null);
 
   async function login() {
     setError("");
@@ -435,6 +539,12 @@ async function fetchDutcher3(tok) {
           onGuardado={() => fetchBets(token)}
         />
       )}
+      {dutcher3Seleccionada && (
+  <CalculadoraDutcher3
+    op={dutcher3Seleccionada}
+    onClose={() => setDutcher3Seleccionada(null)}
+  />
+)}
 
       <div style={styles.header}>
         <div style={{ display: "flex", alignItems: "center", gap: "1.5rem" }}>
@@ -613,7 +723,8 @@ async function fetchDutcher3(tok) {
             </thead>
             <tbody>
               {dutcher3Filtradas.map((o, i) => (
-                <tr key={i} style={{ background: o.beneficio_pct > 0 ? "rgba(46,204,113,0.05)" : "rgba(231,76,60,0.03)" }}>
+                <tr key={i} style={{ background: o.beneficio_pct > 0 ? "rgba(46,204,113,0.05)" : "rgba(231,76,60,0.03)", cursor: "pointer" }}
+                  onClick={() => setDutcher3Seleccionada(o)}>
                   <td style={{ ...styles.td, textAlign: "center" }}>
                     <span style={{ color: getMargenColor(o.beneficio_pct), fontWeight: "bold", fontSize: "1rem" }}>
                       {o.beneficio_pct > 0 ? "+" : ""}{o.beneficio_pct}%
