@@ -46,6 +46,8 @@ from app.services.sync_service import sync_events_from_provider
 from app.db.base import Base
 from app.db.session import engine
 from app.db.migrations import run_sqlite_safe_migrations
+
+from apscheduler.schedulers.background import BackgroundScheduler
 # --- Cache ---
 EVENTS_CACHE = []
 
@@ -129,6 +131,25 @@ def require_role(*allowed_roles: str):
 @app.on_event("startup")
 def on_startup():
     ensure_default_users()
+    
+    scheduler = BackgroundScheduler()
+    
+    def auto_sync():
+        from app.services.providers.oddspapi_provider import OddsPapiProvider
+        from app.services.sync_service_oddspapi import sync_events_from_oddspapi
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_oddspapi(db=db, provider=OddsPapiProvider())
+            print(f"✅ Auto-sync OK: {result['inserted']} eventos")
+        except Exception as e:
+            print(f"❌ Auto-sync error: {e}")
+        finally:
+            db.close()
+
+    scheduler.add_job(auto_sync, "interval", minutes=15)
+    scheduler.start()
+    print("🕐 Scheduler arrancado — sync cada 15 minutos")
 
 
 @app.get("/")
