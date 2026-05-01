@@ -483,6 +483,16 @@ def sync_oddspapi(
     result = sync_events_from_oddspapi(db=db, provider=OddsPapiProvider())
     return result
 
+@app.post("/admin/sync-betfair")
+def sync_betfair(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.providers.betfair_provider import BetfairProvider
+    from app.services.sync_service_betfair import sync_betfair_odds
+    result = sync_betfair_odds(db=db, provider=BetfairProvider())
+    return result
+
 @app.get("/odds/matching")
 def get_matching_odds(
     comision: float = 0.02,

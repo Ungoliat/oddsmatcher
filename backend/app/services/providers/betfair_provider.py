@@ -1,13 +1,9 @@
 import os
-import betfairlightweight
-from betfairlightweight import filters
+import requests
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
-
-CERTS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "certs")
-)
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
 
 
 class BetfairProvider:
@@ -15,73 +11,128 @@ class BetfairProvider:
         self.app_key = os.getenv("BETFAIR_APP_KEY", "").strip()
         self.username = os.getenv("BETFAIR_USERNAME", "").strip()
         self.password = os.getenv("BETFAIR_PASSWORD", "").strip()
+        self.session_token = None
+        self.login_url = "https://identitysso.betfair.es/api/login"
+        self.api_url = "https://api.betfair.com/exchange/betting/json-rpc/v1"
+
+    def login(self) -> bool:
+        res = requests.post(
+            self.login_url,
+            data={"username": self.username, "password": self.password},
+            headers={
+                "X-Application": self.app_key,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+        )
+        data = res.json()
+        if data.get("status") == "SUCCESS":
+            self.session_token = data.get("token")
+            return True
+        print(f"❌ Betfair login error: {data}")
+        return False
+
+    def get_headers(self):
+        return {
+            "X-Application": self.app_key,
+            "X-Authentication": self.session_token,
+            "Content-Type": "application/json",
+        }
 
     def fetch_odds(self):
+        if not self.login():
+            return []
+
         try:
-            client = betfairlightweight.APIClient(
-                username=self.username,
-                password=self.password,
-                app_key=self.app_key,
-                certs=CERTS_PATH,
-                locale="spain",
-            )
-            client.login()
+            # Obtener mercados
+            catalogue_body = [{
+                "jsonrpc": "2.0",
+                "method": "SportsAPING/v1.0/listMarketCatalogue",
+                "params": {
+                    "filter": {
+                        "eventTypeIds": ["1"],
+                        "marketCountries": ["ES", "GB", "DE", "FR", "IT"],
+                        "marketTypeCodes": ["MATCH_ODDS"],
+                    },
+                    "marketProjection": ["EVENT", "RUNNER_DESCRIPTION", "COMPETITION"],
+                    "maxResults": 200,
+                },
+                "id": 1,
+            }]
 
-            market_filter = filters.market_filter(
-                event_type_ids=["1"],
-                market_countries=["ES", "GB", "DE", "FR", "IT"],
-                market_type_codes=["MATCH_ODDS"],
-            )
+            res = requests.post(self.api_url, json=catalogue_body, headers=self.get_headers())
+            markets = res.json()[0].get("result", [])
 
-            markets = client.betting.list_market_catalogue(
-                filter=market_filter,
-                market_projection=["EVENT", "RUNNER_DESCRIPTION", "COMPETITION"],
-                max_results=200,
-            )
+            if not markets:
+                return []
 
-            market_ids = [m.market_id for m in markets]
+            market_ids = [m["marketId"] for m in markets]
+            market_info = {m["marketId"]: m for m in markets}
+
             results = []
 
+            # Procesar en lotes de 40
             for i in range(0, len(market_ids), 40):
                 batch = market_ids[i:i+40]
-                books = client.betting.list_market_book(
-                    market_ids=batch,
-                    price_projection=filters.price_projection(
-                        price_data=["EX_BEST_OFFERS"]
-                    ),
-                )
 
-                market_info = {m.market_id: m for m in markets}
+                book_body = [{
+                    "jsonrpc": "2.0",
+                    "method": "SportsAPING/v1.0/listMarketBook",
+                    "params": {
+                        "marketIds": batch,
+                        "priceProjection": {
+                            "priceData": ["EX_BEST_OFFERS"],
+                            "exBestOffersOverrides": {
+                                "bestPricesDepth": 1,
+                            },
+                        },
+                    },
+                    "id": 1,
+                }]
+
+                res2 = requests.post(self.api_url, json=book_body, headers=self.get_headers())
+                books = res2.json()[0].get("result", [])
 
                 for book in books:
-                    info = market_info.get(book.market_id)
-                    if not info:
-                        continue
+                    market_id = book.get("marketId")
+                    info = market_info.get(market_id, {})
+                    event = info.get("event", {})
+                    competition = info.get("competition", {})
+                    runners = info.get("runners", [])
 
-                    event_name = info.event.name if info.event else ""
-                    competition = info.competition.name if info.competition else ""
-                    runner_map = {r.selection_id: r.runner_name for r in info.runners}
+                    runner_map = {r["selectionId"]: r["runnerName"] for r in runners}
+                    partido = event.get("name", "")
+                    competicion = competition.get("name", "")
 
                     odds = {}
-                    for runner in book.runners:
-                        name = runner_map.get(runner.selection_id, str(runner.selection_id))
-                        back = runner.ex.available_to_back
-                        lay = runner.ex.available_to_lay
-                        if back:
-                            odds[f"back_{name}"] = back[0].price
-                        if lay:
-                            odds[f"lay_{name}"] = lay[0].price
+                    for runner in book.get("runners", []):
+                        selection_id = runner.get("selectionId")
+                        name = runner_map.get(selection_id, str(selection_id))
 
-                    if odds and event_name:
+                        # Normalizar nombre
+                        if name == "The Draw":
+                            name = "draw"
+                        
+                        back = runner.get("ex", {}).get("availableToBack", [])
+                        lay = runner.get("ex", {}).get("availableToLay", [])
+                        back_price = back[0]["price"] if back else None
+                        lay_price = lay[0]["price"] if lay else None
+
+                        if back_price:
+                            odds[f"back_{name}"] = back_price
+                        if lay_price:
+                            odds[f"lay_{name}"] = lay_price
+
+                    if odds and partido:
                         results.append({
-                            "market_id": book.market_id,
-                            "partido": event_name,
-                            "competition": competition,
+                            "market_id": market_id,
+                            "partido": partido,
+                            "competicion": competicion,
                             "odds": odds,
                         })
 
             return results
 
         except Exception as e:
-            print(f"❌ Betfair error: {e}")
+            print(f"❌ Betfair fetch error: {e}")
             return []
