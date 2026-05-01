@@ -445,10 +445,10 @@ async function fetchDutcher3(tok) {
   finally { setLoading(false); }
 }
 
-  async function syncReal() {
+ async function syncReal() {
     setSyncing(true); setSyncMsg("");
     try {
-      const res = await fetch(`${API}/admin/sync-api-real`, {
+      const res = await fetch(`${API}/admin/sync-oddspapi`, {
         method: "POST", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -686,7 +686,9 @@ async function fetchDutcher3(tok) {
                                   <div style={styles.outcomesRow}>
                                     {Object.entries(outcomes).map(([equipo, cuota]) => (
                                       <div key={equipo} style={styles.outcomeBox}>
-                                        <span style={styles.outcomeEquipo}>{equipo}</span>
+                                        <span style={styles.outcomeEquipo}>
+  {equipo === "home" ? "1" : equipo === "away" ? "2" : equipo === "draw" ? "X" : equipo}
+</span>
                                         <span style={styles.outcomeCuota}>{cuota}</span>
                                       </div>
                                     ))}

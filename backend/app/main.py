@@ -403,6 +403,8 @@ def get_dutcher3(
 
         for b in bookies:
             bookie = b["bookie"]
+            if bookie == "betfair":
+                continue
             cuotas = b.get("cuotas", {})
             mercado_1x2 = cuotas.get("1X2", {})
 
