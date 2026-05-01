@@ -152,14 +152,23 @@ class OddsPapiProvider:
                                 player = players.get("0", {})
                                 price = player.get("price")
                                 raw_name = player.get("bookmakerOutcomeId", outcome_id_str)
+                                
 
                                 # Normalizar nombres
                                 name_map = {
-                                    "home": "home", "away": "away", "draw": "draw",
-                                    "homeordraw": "1X", "homeoraway": "12", "draworaway": "X2",
-                                    "home-or-draw": "1X", "home-or-away": "12", "draw-or-away": "X2",
-                                    "yes": "Yes", "no": "No",
-                                    "over": "Over", "under": "Under",
+                                    "homeordraw": "1X",
+                                    "homeoraway": "12",
+                                    "draworaway": "X2",
+                                    "home-or-draw": "1X",
+                                    "home-or-away": "12",
+                                    "draw-or-away": "X2",
+                                    "home": "home",
+                                    "away": "away",
+                                    "draw": "draw",
+                                    "yes": "Yes",
+                                    "no": "No",
+                                    "over": "Over",
+                                    "under": "Under",
                                 }
                                 raw_lower = str(raw_name).lower()
                                 outcome_name = raw_name
