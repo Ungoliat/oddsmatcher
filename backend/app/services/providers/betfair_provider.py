@@ -112,21 +112,27 @@ class BetfairProvider:
                         # Normalizar nombre
                         if name == "The Draw":
                             name = "draw"
+                        name = name.replace("Man Utd", "Manchester United")
+                        name = name.replace("Tottenham", "Tottenham Hotspur")
+                        name = name.replace("Spurs", "Tottenham Hotspur")
                         
                         back = runner.get("ex", {}).get("availableToBack", [])
                         lay = runner.get("ex", {}).get("availableToLay", [])
-                        back_price = back[0]["price"] if back and back[0].get("size", 0) >= 10 else None
-                        lay_price = lay[0]["price"] if lay and lay[0].get("size", 0) >= 10 else None
-                        if partido and "Lens" in partido:
-                            print(f"🔍 LENS back: {back} lay: {lay}")
+                        back_price = back[0]["price"] if back else None
+                        back_size = back[0]["size"] if back else 0
+                        lay_price = lay[0]["price"] if lay else None
+                        lay_size = lay[0]["size"] if lay else 0
 
-                        if back_price:
+                        if back_price and back_size >= 10:
                             odds[f"back_{name}"] = back_price
-                        if lay_price:
+                        if lay_price and lay_size >= 10:
                             odds[f"lay_{name}"] = lay_price
 
-                    has_liquidity = any(k.startswith("lay_") for k in odds)
-                    if odds and partido and has_liquidity:
+                    has_lay = any(k.startswith("lay_") for k in odds)
+                    if not has_lay:
+                        continue
+
+                    if odds and partido:
                         results.append({
                             "market_id": market_id,
                             "partido": partido,
