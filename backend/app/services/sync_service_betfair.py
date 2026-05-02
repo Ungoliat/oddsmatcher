@@ -51,16 +51,7 @@ def sync_betfair_odds(db: Session, provider) -> Dict[str, Any]:
         for key, price in odds_bf.items():
             if key.startswith("lay_"):
                 outcome = key.replace("lay_", "")
-                if outcome == "draw":
-                    cuotas["1X2"][f"lay_draw"] = price
-                else:
-                    cuotas["1X2"][f"lay_{outcome}"] = price
-            elif key.startswith("back_"):
-                outcome = key.replace("back_", "")
-                if outcome == "draw":
-                    cuotas["1X2"]["draw"] = price
-                else:
-                    cuotas["1X2"][outcome] = price
+                cuotas["1X2"][outcome] = price
 
         if betfair_event:
             # Actualizar cuotas existentes
