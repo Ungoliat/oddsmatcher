@@ -127,7 +127,6 @@ def require_role(*allowed_roles: str):
 # ======================================================
 # STARTUP
 # ======================================================
-
 @app.on_event("startup")
 def on_startup():
     ensure_default_users()
@@ -147,14 +146,23 @@ def on_startup():
         finally:
             db.close()
 
+    def auto_sync_betfair():
+        from app.services.providers.betfair_provider import BetfairProvider
+        from app.services.sync_service_betfair import sync_betfair_odds
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_betfair_odds(db=db, provider=BetfairProvider())
+            print(f"✅ Betfair sync OK: {result['updated']} eventos actualizados")
+        except Exception as e:
+            print(f"❌ Betfair sync error: {e}")
+        finally:
+            db.close()
+
     scheduler.add_job(auto_sync, "interval", minutes=15)
+    scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
     scheduler.start()
-    print("🕐 Scheduler arrancado — sync cada 15 minutos")
-
-
-@app.get("/")
-def root():
-    return {"status": "ok", "msg": "Oddsmatcher API base OK ✅"}
+    print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Betfair cada 1 min")
 
 
 # ======================================================
