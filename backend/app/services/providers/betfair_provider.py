@@ -128,6 +128,12 @@ class BetfairProvider:
                         if lay_price and lay_size >= 10:
                             odds[f"lay_{name}"] = lay_price
 
+                    # Ignorar mercados cerrados (partidos ya jugados)
+                    lay_values = [v for k, v in odds.items() if k.startswith("lay_")]
+                    if lay_values and min(lay_values) < 1.1:
+                        continue      
+
+
                     has_lay = any(k.startswith("lay_") for k in odds)
                     if not has_lay:
                         continue

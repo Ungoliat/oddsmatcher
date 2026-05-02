@@ -516,6 +516,24 @@ def sync_betfair(
     result = sync_betfair_odds(db=db, provider=BetfairProvider())
     return result
 
+@app.post("/admin/sync-all")
+def sync_all(
+    db: Session = Depends(get_db),
+    _: UserPublic = Depends(require_role("admin")),
+):
+    from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
+    from app.services.sync_service_betfair import sync_betfair_odds
+    from app.services.providers.the_odds_api_provider import TheOddsApiProvider
+    from app.services.providers.betfair_provider import BetfairProvider
+
+    result_odds = sync_events_from_the_odds_api(db=db, provider=TheOddsApiProvider())
+    result_betfair = sync_betfair_odds(db=db, provider=BetfairProvider())
+
+    return {
+        "the_odds_api": result_odds,
+        "betfair": result_betfair,
+    }
+
 @app.post("/admin/sync-the-odds-api")
 def sync_the_odds_api(
     _: UserPublic = Depends(require_role("admin")),

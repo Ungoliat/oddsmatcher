@@ -448,11 +448,12 @@ async function fetchDutcher3(tok) {
  async function syncReal() {
     setSyncing(true); setSyncMsg("");
     try {
-      const res = await fetch(`${API}/admin/sync-oddspapi`, {
+      const res = await fetch(`${API}/admin/sync-all`, {
         method: "POST", headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      setSyncMsg(`✅ Sync OK — ${data.inserted} eventos insertados`);
+      const updated = data.betfair?.updated ?? 0;
+      setSyncMsg(`✅ Sync OK — ${updated} eventos actualizados`);
       fetchGroups(token);
       fetchMatching(token, comision);
     } catch { setSyncMsg("❌ Error en el sync"); }
