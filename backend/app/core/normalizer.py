@@ -8,14 +8,15 @@ def normalizar_nombre_equipo(nombre: str) -> str:
     # Eliminar sufijos comunes
     sufijos = [
         " FC", " CF", " SC", " AC", " BC", " SD", " UD", " CD",
-        " United", " City", " Town", " Wanderers", " Hotspur",
         " Athletic", " Atletico", " Deportivo",
-        " v ", " vs ",
     ]
     
     nombre_norm = nombre
     for sufijo in sufijos:
         nombre_norm = nombre_norm.replace(sufijo, "")
+    
+    # Normalizar separador de partido
+    nombre_norm = nombre_norm.replace(" v ", " vs ")
     
     return nombre_norm.strip().lower()
 

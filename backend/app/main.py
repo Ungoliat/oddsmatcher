@@ -159,8 +159,23 @@ def on_startup():
         finally:
             db.close()
 
+    def auto_sync_the_odds_api():
+        from app.services.providers.the_odds_api_provider import TheOddsApiProvider
+        from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_the_odds_api(db=db, provider=TheOddsApiProvider())
+            remaining = result['meta'].get('requests', [{}])[0].get('x_requests_remaining', '?')
+            print(f"✅ TheOddsAPI sync OK: {result['inserted']} eventos | remaining: {remaining}")
+        except Exception as e:
+            print(f"❌ TheOddsAPI sync error: {e}")
+        finally:
+            db.close()
+
     scheduler.add_job(auto_sync, "interval", minutes=15)
     scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
+    # scheduler.add_job(auto_sync_the_odds_api, "interval", minutes=1)  # activar con plan de pago
     scheduler.start()
     print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Betfair cada 1 min")
 
@@ -501,6 +516,16 @@ def sync_betfair(
     result = sync_betfair_odds(db=db, provider=BetfairProvider())
     return result
 
+@app.post("/admin/sync-the-odds-api")
+def sync_the_odds_api(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.providers.the_odds_api_provider import TheOddsApiProvider
+    from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
+    result = sync_events_from_the_odds_api(db=db, provider=TheOddsApiProvider())
+    return result
+
 @app.get("/odds/matching")
 def get_matching_odds(
     comision: float = 0.02,
@@ -509,6 +534,13 @@ def get_matching_odds(
 ):
     from app.repositories.events_repo import get_grouped_events
     import json
+
+    BOOKIES_ES = {
+        "betsson", "williamhill", "marathonbet", "leovegas_se",
+        "onexbet", "betfair_ex_eu", "winamax_fr", "888sport",
+        "casumo", "pokerstars", "interwetten", "tonybet", "betway",
+        "bwin", "bet365",
+    }
 
     data = get_grouped_events(db=db)
     groups = data.get("groups", [])
@@ -520,7 +552,6 @@ def get_matching_odds(
         competicion = group["competicion"]
         deporte = group["deporte"]
 
-        # Separar bookies normales y betfair
         betfair = next((b for b in group["bookies"] if b["bookie"] == "betfair"), None)
         casas = [b for b in group["bookies"] if b["bookie"] != "betfair"]
 
@@ -529,6 +560,9 @@ def get_matching_odds(
 
         for casa in casas:
             bookie = casa["bookie"]
+
+            if bookie not in BOOKIES_ES:
+                continue
 
             for mercado, outcomes_back in casa["cuotas"].items():
                 if mercado not in betfair["cuotas"]:
@@ -542,10 +576,9 @@ def get_matching_odds(
 
                     lay_odds = outcomes_lay[outcome]
 
-                    if lay_odds <= 1:
+                    if lay_odds <= 1.03:
                         continue
 
-                    # Calculo con back_stake = 100 como referencia
                     back_stake = 100
                     lay_stake = (back_stake * back_odds) / (lay_odds - comision)
                     ganancia_back = back_stake * (back_odds - 1)
@@ -566,7 +599,8 @@ def get_matching_odds(
                         "rating": round(rating, 2),
                         "commence_time": group.get("commence_time"),
                     })
-    oportunidades = [o for o in oportunidades if 85 <= o["rating"] <= 102]
+
+    oportunidades = [o for o in oportunidades if 50 <= o["rating"] <= 120]
     oportunidades.sort(key=lambda x: x["rating"], reverse=True)
 
     return {

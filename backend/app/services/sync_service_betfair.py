@@ -16,6 +16,7 @@ def sync_betfair_odds(db: Session, provider) -> Dict[str, Any]:
     if not betfair_events:
         return {"provider": "betfair", "updated": 0, "error": "No data"}
 
+
     # Obtener todos los eventos actuales de la DB
     db_events = db.query(Event).all()
 

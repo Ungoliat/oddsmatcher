@@ -115,15 +115,18 @@ class BetfairProvider:
                         
                         back = runner.get("ex", {}).get("availableToBack", [])
                         lay = runner.get("ex", {}).get("availableToLay", [])
-                        back_price = back[0]["price"] if back else None
-                        lay_price = lay[0]["price"] if lay else None
+                        back_price = back[0]["price"] if back and back[0].get("size", 0) >= 10 else None
+                        lay_price = lay[0]["price"] if lay and lay[0].get("size", 0) >= 10 else None
+                        if partido and "Lens" in partido:
+                            print(f"🔍 LENS back: {back} lay: {lay}")
 
                         if back_price:
                             odds[f"back_{name}"] = back_price
                         if lay_price:
                             odds[f"lay_{name}"] = lay_price
 
-                    if odds and partido:
+                    has_liquidity = any(k.startswith("lay_") for k in odds)
+                    if odds and partido and has_liquidity:
                         results.append({
                             "market_id": market_id,
                             "partido": partido,
