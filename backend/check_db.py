@@ -1,10 +1,9 @@
 import sqlite3
 
 conn = sqlite3.connect('oddsmatcher.db')
-
-print("=== BETFAIR - TODOS LOS EVENTOS ===")
-rows = conn.execute("SELECT partido, cuotas FROM events WHERE bookie='betfair' ORDER BY partido").fetchall()
+rows = conn.execute("SELECT bookie, partido, cuotas FROM events WHERE partido LIKE '%Wolverhampton%' OR partido LIKE '%Fulham%' OR partido LIKE '%Wolves%'").fetchall()
 for r in rows:
-    print(f"PARTIDO: {r[0]}")
-    print(f"CUOTAS: {r[1]}")
+    print(f"BOOKIE: {r[0]}")
+    print(f"PARTIDO: {r[1]}")
+    print(f"CUOTAS: {r[2]}")
     print("---")

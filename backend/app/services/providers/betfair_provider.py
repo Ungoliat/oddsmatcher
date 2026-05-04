@@ -103,7 +103,7 @@ class BetfairProvider:
                     runner_map = {r["selectionId"]: r["runnerName"] for r in runners}
                     partido = event.get("name", "")
                     competicion = competition.get("name", "")
-
+                   
                     odds = {}
                     for runner in book.get("runners", []):
                         selection_id = runner.get("selectionId")
@@ -127,6 +127,12 @@ class BetfairProvider:
                             odds[f"back_{name}"] = back_price
                         if lay_price and lay_size >= 10:
                             odds[f"lay_{name}"] = lay_price
+
+                    if "Wolverhampton" in partido or "Fulham" in partido:
+                        print(f"DEBUG partido: {partido}")
+                        print(f"DEBUG runner_map: {runner_map}")
+                        print(f"DEBUG odds: {odds}")
+        
 
                     # Ignorar mercados cerrados (partidos ya jugados)
                     lay_values = [v for k, v in odds.items() if k.startswith("lay_")]

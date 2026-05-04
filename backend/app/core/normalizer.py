@@ -37,7 +37,10 @@ def emparejar_partido(partido_betfair: str, partidos_oddspapi: list, umbral: int
 
     for partido in partidos_oddspapi:
         oddspapi_norm = normalizar_nombre_equipo(partido)
-        ratio = fuzz.token_sort_ratio(betfair_norm, oddspapi_norm)
+        ratio = max(
+            fuzz.token_sort_ratio(betfair_norm, oddspapi_norm),
+            fuzz.partial_ratio(betfair_norm, oddspapi_norm)
+        )
         if ratio > mejor_ratio:
             mejor_ratio = ratio
             mejor_match = partido

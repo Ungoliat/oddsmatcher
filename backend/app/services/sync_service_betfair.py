@@ -39,6 +39,11 @@ def sync_betfair_odds(db: Session, provider) -> Dict[str, Any]:
         if not partido_match:
             skipped += 1
             continue
+        
+        if "Wolves" in partido_bf or "Fulham" in partido_bf:
+            print(f"DEBUG SYNC partido_bf: {partido_bf}")
+            print(f"DEBUG SYNC partido_match: {partido_match}")
+            print(f"DEBUG SYNC odds_bf: {odds_bf}")
 
         # Obtener eventos de la DB para este partido
         eventos_db = partido_map.get(partido_match, [])
@@ -46,12 +51,40 @@ def sync_betfair_odds(db: Session, provider) -> Dict[str, Any]:
         # Buscar si ya existe una entrada de betfair o crear una nueva
         betfair_event = next((e for e in eventos_db if e.bookie == "betfair"), None)
 
-        # Construir cuotas normalizadas
+        # Extraer equipos del partido matcheado
+        from rapidfuzz import fuzz
+        partes = partido_match.split(" vs ")
+        home_team = partes[0].strip() if len(partes) == 2 else ""
+        away_team = partes[1].strip() if len(partes) == 2 else ""
+
+        if "Wolverhampton" in partido_match:
+            print(f"DEBUG home: '{home_team}', away: '{away_team}'")
+            for key, price in odds_bf.items():
+                if key.startswith("lay_"):
+                    outcome = key.replace("lay_", "")
+                    r_home = fuzz.ratio(outcome.lower(), home_team.lower())
+                    r_away = fuzz.ratio(outcome.lower(), away_team.lower())
+                    print(f"  outcome='{outcome}' ratio_home={r_home} ratio_away={r_away}")
+
+        # Construir cuotas normalizadas mapeando nombres cortos al nombre completo
         cuotas = {"1X2": {}}
         for key, price in odds_bf.items():
             if key.startswith("lay_"):
                 outcome = key.replace("lay_", "")
-                cuotas["1X2"][outcome] = price
+                if outcome == "draw":
+                    cuotas["1X2"]["draw"] = price
+                elif home_team and (
+                    fuzz.partial_ratio(outcome.lower(), home_team.lower()) > 80 or
+                    home_team.lower().startswith(outcome.lower())
+                ):
+                    cuotas["1X2"][home_team] = price
+                elif away_team and (
+                    fuzz.partial_ratio(outcome.lower(), away_team.lower()) > 80 or
+                    away_team.lower().startswith(outcome.lower())
+                ):
+                    cuotas["1X2"][away_team] = price
+                else:
+                    cuotas["1X2"][outcome] = price
 
         if betfair_event:
             # Actualizar cuotas existentes
