@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const API = "http://localhost:8000";
+const API = "http://116.203.119.10:8000";
 
 function formatFecha(isoString) {
   if (!isoString) return "—";

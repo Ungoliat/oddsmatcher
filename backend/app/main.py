@@ -62,7 +62,7 @@ run_sqlite_safe_migrations(engine)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -158,6 +158,17 @@ def on_startup():
             print(f"❌ Betfair sync error: {e}")
         finally:
             db.close()
+    def auto_sync_winamax():
+        from app.services.sync_service_winamax import sync_events_from_winamax
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_winamax(db=db)
+            print(f"✅ Winamax sync OK: {result['inserted']} eventos insertados")
+        except Exception as e:
+            print(f"❌ Winamax sync error: {e}")
+        finally:
+            db.close()
 
     def auto_sync_the_odds_api():
         from app.services.providers.the_odds_api_provider import TheOddsApiProvider
@@ -174,7 +185,8 @@ def on_startup():
             db.close()
 
     scheduler.add_job(auto_sync, "interval", minutes=15)
-    scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
+    # scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
+    scheduler.add_job(auto_sync_winamax, "interval", minutes=10)
     # scheduler.add_job(auto_sync_the_odds_api, "interval", minutes=1)  # activar con plan de pago
     scheduler.start()
     print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Betfair cada 1 min")
@@ -516,6 +528,15 @@ def sync_betfair(
     result = sync_betfair_odds(db=db, provider=BetfairProvider())
     return result
 
+@app.post("/admin/sync-winamax")
+def sync_winamax(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_winamax import sync_events_from_winamax
+    result = sync_events_from_winamax(db=db)
+    return result
+
 @app.post("/admin/sync-all")
 def sync_all(
     db: Session = Depends(get_db),
@@ -523,16 +544,38 @@ def sync_all(
 ):
     from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
     from app.services.sync_service_betfair import sync_betfair_odds
+    from app.services.sync_service_winamax import sync_events_from_winamax
     from app.services.providers.the_odds_api_provider import TheOddsApiProvider
     from app.services.providers.betfair_provider import BetfairProvider
 
-    result_odds = sync_events_from_the_odds_api(db=db, provider=TheOddsApiProvider())
-    result_betfair = sync_betfair_odds(db=db, provider=BetfairProvider())
+    results = {}
 
-    return {
-        "the_odds_api": result_odds,
-        "betfair": result_betfair,
-    }
+    try:
+        results["the_odds_api"] = sync_events_from_the_odds_api(
+            db=db, provider=TheOddsApiProvider()
+        )
+    except Exception as e:
+        results["the_odds_api"] = {"error": str(e)}
+
+    try:
+        results["betfair"] = sync_betfair_odds(
+            db=db, provider=BetfairProvider()
+        )
+    except Exception as e:
+        results["betfair"] = {"error": str(e)}
+
+    try:
+        results["winamax"] = sync_events_from_winamax(db=db)
+    except Exception as e:
+        results["winamax"] = {"error": str(e)}
+
+    total = sum(
+        r.get("inserted", r.get("updated", 0))
+        for r in results.values()
+        if isinstance(r, dict) and "error" not in r
+    )
+
+    return {"status": "ok", "total": total, "results": results}
 
 @app.post("/admin/sync-the-odds-api")
 def sync_the_odds_api(

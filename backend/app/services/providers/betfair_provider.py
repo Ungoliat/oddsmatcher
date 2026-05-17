@@ -12,13 +12,18 @@ class BetfairProvider:
         self.username = os.getenv("BETFAIR_USERNAME", "").strip()
         self.password = os.getenv("BETFAIR_PASSWORD", "").strip()
         self.session_token = None
-        self.login_url = "https://identitysso.betfair.es/api/login"
+        self.login_url = "https://identitysso-cert.betfair.es/api/certlogin"
         self.api_url = "https://api.betfair.com/exchange/betting/json-rpc/v1"
+        self.cert = (
+            str(Path(__file__).resolve().parents[3] / "certs" / "client-2048.crt"),
+            str(Path(__file__).resolve().parents[3] / "certs" / "client-2048.key"),
+        )
 
     def login(self) -> bool:
         res = requests.post(
             self.login_url,
             data={"username": self.username, "password": self.password},
+            cert=self.cert,
             headers={
                 "X-Application": self.app_key,
                 "Content-Type": "application/x-www-form-urlencoded",
@@ -26,8 +31,8 @@ class BetfairProvider:
             },
         )
         data = res.json()
-        if data.get("status") == "SUCCESS":
-            self.session_token = data.get("token")
+        if data.get("loginStatus") == "SUCCESS":
+            self.session_token = data.get("sessionToken")
             return True
         print(f"❌ Betfair login error: {data}")
         return False
