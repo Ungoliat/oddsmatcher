@@ -1,6 +1,6 @@
 # --- Standard library ---
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Any
 from datetime import datetime
 import csv
 import shutil
@@ -8,6 +8,7 @@ import json
 
 # --- FastAPI ---
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from pydantic import BaseModel
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -536,6 +537,68 @@ def sync_winamax(
     from app.services.sync_service_winamax import sync_events_from_winamax
     result = sync_events_from_winamax(db=db)
     return result
+
+
+class WinamaxEventIn(BaseModel):
+    bookie: str
+    competicion: str
+    partido: str
+    mercados: Any
+    deporte: str
+    commence_time: Optional[str] = None
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    cuotas: Optional[Any] = None
+    source: Optional[str] = "winamax_fr"
+
+
+@app.post("/admin/push-winamax")
+def push_winamax(
+    eventos: List[WinamaxEventIn],
+    db: Session = Depends(get_db),
+):
+    db.query(Event).filter(Event.source == "winamax_fr").delete()
+
+    inserted = 0
+    for ev in eventos:
+        commence_dt = None
+        if ev.commence_time:
+            try:
+                commence_dt = datetime.fromisoformat(ev.commence_time.replace("Z", "+00:00"))
+            except Exception:
+                commence_dt = None
+
+        if isinstance(ev.mercados, list):
+            mercados_json = json.dumps(ev.mercados, ensure_ascii=False)
+        elif isinstance(ev.mercados, str):
+            mercados_json = ev.mercados
+        else:
+            mercados_json = json.dumps([], ensure_ascii=False)
+
+        if ev.cuotas is None:
+            cuotas_json = None
+        elif isinstance(ev.cuotas, str):
+            cuotas_json = ev.cuotas
+        else:
+            cuotas_json = json.dumps(ev.cuotas, ensure_ascii=False)
+
+        db.add(Event(
+            bookie=ev.bookie,
+            competicion=ev.competicion,
+            partido=ev.partido,
+            mercados=mercados_json,
+            deporte=ev.deporte,
+            source=ev.source or "winamax_fr",
+            commence_time=commence_dt,
+            home_team=ev.home_team,
+            away_team=ev.away_team,
+            cuotas=cuotas_json,
+        ))
+        inserted += 1
+
+    db.commit()
+    return {"status": "ok", "inserted": inserted}
+
 
 @app.post("/admin/sync-all")
 def sync_all(
