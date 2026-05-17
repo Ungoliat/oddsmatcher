@@ -170,7 +170,7 @@ def sync_events_from_winamax(db: Session) -> Dict[str, Any]:
     print(f"[Winamax] Datos capturados: {len(matches)} partidos")
 
     # Borrar eventos anteriores de Winamax
-    db.query(Event).filter(Event.source == "winamax").delete()
+    db.query(Event).filter(Event.source == "winamax_fr").delete()
     db.commit()
 
     existing_keys: Set[str] = set()
