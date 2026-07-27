@@ -60,12 +60,22 @@ def _capturar_datos_winamax() -> Dict:
 
                 page.on("websocket", on_websocket)
 
-                page.goto(
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/4",
-                    wait_until="domcontentloaded",
-                    timeout=30000,
-                )
-                time.sleep(20)
+                URLS_LIGAS = [
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/4",    # Ligue 1
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/36",   # LaLiga
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/1",    # Premier League
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/42",   # Bundesliga
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/33",   # Serie A
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/151665", # Champions League
+                    "https://www.winamax.es/apuestas-deportivas/sports/1/10909",  # Europa League
+                ]
+
+                for url in URLS_LIGAS:
+                    try:
+                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        time.sleep(10)
+                    except Exception as e:
+                        print(f"[Winamax] Error cargando {url}: {e}")
                 browser.close()
 
         except Exception as e:
