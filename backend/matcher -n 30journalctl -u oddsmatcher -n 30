@@ -1,0 +1,15 @@
+[0;1;32m●[0m oddsmatcher.service - Oddsmatcher Backend
+     Loaded: loaded (]8;;file://oddsmatcher/etc/systemd/system/oddsmatcher.service/etc/systemd/system/oddsmatcher.service]8;;; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Mon 2026-07-27 17:32:06 UTC; 4s ago
+   Main PID: 2824512 (uvicorn)
+      Tasks: 7 (limit: 4531)
+     Memory: 61.9M (peak: 62.1M)
+        CPU: 634ms
+     CGroup: /system.slice/oddsmatcher.service
+             └─[0;38;5;245m2824512 /root/oddsmatcher/backend/venv/bin/python3 /root/oddsmatcher/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000[0m
+
+Jul 27 17:32:06 oddsmatcher systemd[1]: Started oddsmatcher.service - Oddsmatcher Backend.
+Jul 27 17:32:07 oddsmatcher uvicorn[2824512]: INFO:     Started server process [2824512]
+Jul 27 17:32:07 oddsmatcher uvicorn[2824512]: INFO:     Waiting for application startup.
+Jul 27 17:32:07 oddsmatcher uvicorn[2824512]: INFO:     Application startup complete.
+Jul 27 17:32:07 oddsmatcher uvicorn[2824512]: INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

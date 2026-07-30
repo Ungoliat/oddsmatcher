@@ -31,15 +31,21 @@ TORNEOS_INTERES = {
 }
 
 
+URLS_LIGAS = [
+    ("https://www.winamax.es/apuestas-deportivas/sports/1/32/36", "LaLiga"),
+    ("https://www.winamax.es/apuestas-deportivas/sports/1/7/4", "Ligue 1"),
+    ("https://www.winamax.es/apuestas-deportivas/sports/1/1/1", "Premier League"),
+    ("https://www.winamax.es/apuestas-deportivas/sports/1/31/33", "Serie A"),
+    ("https://www.winamax.es/apuestas-deportivas/sports/1/30/42", "Bundesliga"),
+]
+
 def _capturar_datos_winamax() -> Dict:
     from playwright.sync_api import sync_playwright
-    import random
 
-    MAX_INTENTOS = 3
+    datos_total = {}
 
-    for intento in range(1, MAX_INTENTOS + 1):
-        print(f"[Winamax] Intento {intento}/{MAX_INTENTOS}...")
-        datos = {}
+    for url, nombre in URLS_LIGAS:
+        print(f"[Winamax] Capturando {nombre}...")
         mensajes = []
 
         try:
@@ -59,104 +65,26 @@ def _capturar_datos_winamax() -> Dict:
                     ws.on("framereceived", on_message)
 
                 page.on("websocket", on_websocket)
-
-                URLS_LIGAS = [
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/4",    # Ligue 1
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/36",   # LaLiga
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/1",    # Premier League
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/42",   # Bundesliga
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/7/33",   # Serie A
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/151665", # Champions League
-                    "https://www.winamax.es/apuestas-deportivas/sports/1/10909",  # Europa League
-                ]
-
-                for url in URLS_LIGAS:
-                    try:
-                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                        time.sleep(10)
-                    except Exception as e:
-                        print(f"[Winamax] Error cargando {url}: {e}")
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(25)
                 browser.close()
 
         except Exception as e:
-            print(f"[Winamax] Error en intento {intento}: {e}")
+            print(f"[Winamax] Error en {nombre}: {e}")
+            continue
 
-        # Procesar mensajes capturados
         for msg in mensajes:
             try:
                 json_str = msg[7:-1]
                 data = json.loads(json_str)
-                if "matches" in data and "bets" in data and "odds" in data:
+                if "matches" in data and "bets" in data:
                     for key in ("matches", "bets", "outcomes", "odds", "tournaments"):
                         if key in data:
-                            datos.setdefault(key, {}).update(data[key])
+                            datos_total.setdefault(key, {}).update(data[key])
             except Exception:
                 continue
 
-        if datos.get("matches"):
-            print(f"[Winamax] Datos obtenidos en intento {intento}")
-            return datos
-
-        # Espera aleatoria entre intentos para evitar detección
-        if intento < MAX_INTENTOS:
-            espera = random.randint(10, 20)
-            print(f"[Winamax] Sin datos, esperando {espera}s antes de reintentar...")
-            time.sleep(espera)
-
-    print("[Winamax] No se pudieron obtener datos tras todos los intentos")
-    return {}
-
-
-def _extraer_cuotas_1x2(match_id: int, datos: Dict) -> Dict[str, float] | None:
-    """
-    Dado un matchId, busca su apuesta principal (1X2) y devuelve las cuotas.
-    """
-    matches = datos.get("matches", {})
-    bets = datos.get("bets", {})
-    outcomes = datos.get("outcomes", {})
-    odds = datos.get("odds", {})
-
-    match = matches.get(str(match_id))
-    if not match:
-        return None
-
-    main_bet_id = str(match.get("mainBetId", ""))
-    if not main_bet_id:
-        return None
-
-    bet = bets.get(main_bet_id)
-    if not bet:
-        return None
-
-    # Solo procesamos apuestas de resultado (1X2)
-    if bet.get("betType") != 3178:
-        return None
-
-    outcome_ids = bet.get("outcomes", [])
-    if len(outcome_ids) != 3:
-        return None
-
-    resultado = {}
-    for oid in outcome_ids:
-        oid_str = str(oid)
-        outcome = outcomes.get(oid_str, {})
-        odd_val = odds.get(oid_str)
-        code = outcome.get("code", "")
-        label = outcome.get("label", "")
-
-        if not odd_val or odd_val <= 1:
-            return None  # cuota inválida
-
-        if code == "1":
-            resultado["home"] = round(float(odd_val), 2)
-        elif code == "x":
-            resultado["draw"] = round(float(odd_val), 2)
-        elif code == "2":
-            resultado["away"] = round(float(odd_val), 2)
-
-    if len(resultado) == 3:
-        return resultado
-    return None
+    return datos_total
 
 
 def sync_events_from_winamax(db: Session) -> Dict[str, Any]:
