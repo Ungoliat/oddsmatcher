@@ -171,6 +171,18 @@ def on_startup():
         finally:
             db.close()
 
+    def auto_sync_sportium():
+        from app.services.sync_service_sportium import sync_events_from_sportium
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_sportium(db=db)
+            print(f"✅ Sportium sync OK: {result['inserted']} eventos insertados")
+        except Exception as e:
+            print(f"❌ Sportium sync error: {e}")
+        finally:
+            db.close()
+
     def auto_sync_the_odds_api():
         from app.services.providers.the_odds_api_provider import TheOddsApiProvider
         from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
@@ -188,9 +200,10 @@ def on_startup():
     scheduler.add_job(auto_sync, "interval", minutes=15)
     # scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
     scheduler.add_job(auto_sync_winamax, "interval", minutes=10)
+    scheduler.add_job(auto_sync_sportium, "interval", minutes=15)
     # scheduler.add_job(auto_sync_the_odds_api, "interval", minutes=1)  # activar con plan de pago
     scheduler.start()
-    print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Betfair cada 1 min")
+    print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Winamax cada 10 min, Sportium cada 15 min")
 
 
 # ======================================================
@@ -539,6 +552,16 @@ def sync_winamax(
     return result
 
 
+@app.post("/admin/sync-sportium")
+def sync_sportium(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_sportium import sync_events_from_sportium
+    result = sync_events_from_sportium(db=db)
+    return result
+
+
 class WinamaxEventIn(BaseModel):
     bookie: str
     competicion: str
@@ -608,6 +631,7 @@ def sync_all(
     from app.services.sync_service_the_odds_api import sync_events_from_the_odds_api
     from app.services.sync_service_betfair import sync_betfair_odds
     from app.services.sync_service_winamax import sync_events_from_winamax
+    from app.services.sync_service_sportium import sync_events_from_sportium
     from app.services.providers.the_odds_api_provider import TheOddsApiProvider
     from app.services.providers.betfair_provider import BetfairProvider
 
@@ -631,6 +655,11 @@ def sync_all(
         results["winamax"] = sync_events_from_winamax(db=db)
     except Exception as e:
         results["winamax"] = {"error": str(e)}
+
+    try:
+        results["sportium"] = sync_events_from_sportium(db=db)
+    except Exception as e:
+        results["sportium"] = {"error": str(e)}
 
     total = sum(
         r.get("inserted", r.get("updated", 0))
@@ -663,7 +692,7 @@ def get_matching_odds(
         "betsson", "williamhill", "marathonbet", "leovegas_se",
         "onexbet", "betfair_ex_eu", "winamax_fr", "888sport",
         "casumo", "pokerstars", "interwetten", "tonybet", "betway",
-        "bwin", "bet365",
+        "bwin", "bet365", "sportium",
     }
 
     data = get_grouped_events(db=db)
