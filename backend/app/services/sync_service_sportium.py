@@ -86,6 +86,54 @@ def _cerrar_banner_cookies(page) -> None:
         pass
 
 
+def _extraer_partidos_de_pagina(page, nombre_comp: str, deporte: str) -> List[Dict[str, Any]]:
+    """Lee los partidos ya renderizados en `page` (una página ya cargada en
+    la competición `nombre_comp`) y los devuelve como lista de dicts."""
+    partidos: List[Dict[str, Any]] = []
+
+    filas = page.query_selector_all(".ta-EventListItem")
+
+    for fila in filas:
+        try:
+            fecha_el = fila.query_selector('div[style*="font-size: 12px"]')
+            fecha_txt = fecha_el.inner_text().strip() if fecha_el else None
+
+            participantes = fila.query_selector_all(".ta-ParticipantItem")
+            equipos = [p_el.inner_text().strip() for p_el in participantes]
+            if len(equipos) != 2 or not equipos[0] or not equipos[1]:
+                continue
+
+            link = fila.query_selector('a[href*="/events/"]')
+            event_id = link.get_attribute("href").rstrip("/").split("/")[-1] if link else None
+
+            precios = fila.query_selector_all(".ta-MarketType-MRES .ta-price_text")
+            cuotas_txt = [pr.inner_text().strip() for pr in precios]
+            if len(cuotas_txt) != 3:
+                # Partido sin mercado 1X2 disponible (ya empezado, cancelado, etc.)
+                continue
+
+            cuota_1, cuota_x, cuota_2 = (
+                float(c.replace(",", ".")) for c in cuotas_txt
+            )
+
+            partidos.append({
+                "event_id": event_id,
+                "home_team": equipos[0],
+                "away_team": equipos[1],
+                "competicion": nombre_comp,
+                "deporte": deporte,
+                "fecha_txt": fecha_txt,
+                "cuota_1": cuota_1,
+                "cuota_x": cuota_x,
+                "cuota_2": cuota_2,
+            })
+        except Exception as e:
+            print(f"[Sportium] Error procesando un partido de {nombre_comp}: {e}")
+            continue
+
+    return partidos
+
+
 def _capturar_datos_sportium() -> List[Dict[str, Any]]:
     """
     Recorre cada competición de interés en Sportium y extrae, para cada
@@ -97,6 +145,15 @@ def _capturar_datos_sportium() -> List[Dict[str, Any]]:
     cada partido es un bloque `.ta-EventListItem` y las cuotas 1X2 están en
     `.ta-MarketType-MRES .ta-price_text` dentro de ese bloque, en el orden
     1 / X / 2.
+
+    IMPORTANTE: el widget de Sportium (Playtech) es inestable si se reutiliza
+    la misma pestaña para navegar de una competición a otra con
+    `page.goto()`: a partir de la 3ª o 4ª navegación en la misma pestaña,
+    su router interno puede "romperse" (se ha visto un 403 seguido de un
+    crash de React) y esa pestaña deja de mostrar partidos para el resto de
+    la sesión, aunque la competición sí tenga partidos disponibles. Por eso
+    abrimos una pestaña (page) NUEVA para cada competición: así cada carga
+    se comporta como la primera de la sesión, que siempre funciona bien.
     """
     from playwright.sync_api import sync_playwright
 
@@ -107,10 +164,6 @@ def _capturar_datos_sportium() -> List[Dict[str, Any]]:
             headless=True,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
         )
-        page = browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            locale="es-ES",
-        )
 
         cookies_cerradas = False
 
@@ -118,62 +171,40 @@ def _capturar_datos_sportium() -> List[Dict[str, Any]]:
             url = URL_COMPETICION.format(competition_id=competition_id)
             print(f"[Sportium] Capturando {nombre_comp}...")
 
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Hasta 2 intentos: si el primero falla (o no encuentra ningún
+            # partido, señal de que el widget se ha quedado en blanco),
+            # cerramos la pestaña y probamos una vez más con una pestaña
+            # completamente nueva antes de rendirnos con esta competición.
+            partidos_comp: List[Dict[str, Any]] = []
+            for intento in (1, 2):
+                page = browser.new_page(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    locale="es-ES",
+                )
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-                if not cookies_cerradas:
-                    _cerrar_banner_cookies(page)
-                    cookies_cerradas = True
+                    if not cookies_cerradas:
+                        _cerrar_banner_cookies(page)
+                        cookies_cerradas = True
 
-                page.wait_for_selector(".ta-EventListItem", timeout=15000)
-                # Pequeño margen para que terminen de pintarse todas las cuotas
-                time.sleep(1.5)
+                    page.wait_for_selector(".ta-EventListItem", timeout=15000)
+                    # Pequeño margen para que terminen de pintarse todas las cuotas
+                    time.sleep(1.5)
 
-                filas = page.query_selector_all(".ta-EventListItem")
+                    partidos_comp = _extraer_partidos_de_pagina(page, nombre_comp, deporte)
 
-                for fila in filas:
-                    try:
-                        fecha_el = fila.query_selector('div[style*="font-size: 12px"]')
-                        fecha_txt = fecha_el.inner_text().strip() if fecha_el else None
+                    if partidos_comp:
+                        break
+                    if intento == 1:
+                        print(f"[Sportium] {nombre_comp}: 0 partidos en el primer intento, reintentando con pestaña nueva...")
+                except Exception as e:
+                    print(f"[Sportium] Error en {nombre_comp} (intento {intento}): {e}")
+                finally:
+                    page.close()
 
-                        participantes = fila.query_selector_all(".ta-ParticipantItem")
-                        equipos = [p_el.inner_text().strip() for p_el in participantes]
-                        if len(equipos) != 2 or not equipos[0] or not equipos[1]:
-                            continue
-
-                        link = fila.query_selector('a[href*="/events/"]')
-                        event_id = link.get_attribute("href").rstrip("/").split("/")[-1] if link else None
-
-                        precios = fila.query_selector_all(".ta-MarketType-MRES .ta-price_text")
-                        cuotas_txt = [pr.inner_text().strip() for pr in precios]
-                        if len(cuotas_txt) != 3:
-                            # Partido sin mercado 1X2 disponible (ya empezado, cancelado, etc.)
-                            continue
-
-                        cuota_1, cuota_x, cuota_2 = (
-                            float(c.replace(",", ".")) for c in cuotas_txt
-                        )
-
-                        eventos.append({
-                            "event_id": event_id,
-                            "home_team": equipos[0],
-                            "away_team": equipos[1],
-                            "competicion": nombre_comp,
-                            "deporte": deporte,
-                            "fecha_txt": fecha_txt,
-                            "cuota_1": cuota_1,
-                            "cuota_x": cuota_x,
-                            "cuota_2": cuota_2,
-                        })
-                    except Exception as e:
-                        print(f"[Sportium] Error procesando un partido de {nombre_comp}: {e}")
-                        continue
-
-                print(f"[Sportium] {nombre_comp}: {len(filas)} partidos encontrados")
-
-            except Exception as e:
-                print(f"[Sportium] Error en {nombre_comp}: {e}")
-                continue
+            eventos.extend(partidos_comp)
+            print(f"[Sportium] {nombre_comp}: {len(partidos_comp)} partidos encontrados")
 
             # Pausa entre competiciones para no saturar el sitio
             time.sleep(2)
