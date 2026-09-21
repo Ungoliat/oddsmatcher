@@ -1,18 +1,48 @@
 import json
-import time
 from typing import Any, Dict, List, Set
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
+import requests
 from sqlalchemy.orm import Session
 from app.models.event import Event
 
-# Competiciones de fútbol de Yosports que nos interesan.
-# Yosports usa Kambi (un proveedor de apuestas de terceros muy extendido) y
-# cada competición tiene una "ruta" (slug) legible, a diferencia de Sportium
-# que usaba un ID numérico. La URL completa de cada una es:
-# https://www.yosports.es/#sports-hub/football/{slug}
-# (localizado navegando manualmente por el menú de ligas el 19/09/2026;
-# si Yosports reorganiza su catálogo habría que revisar estos slugs).
+# ---------------------------------------------------------------------------
+# REESCRITO EL 21/09/2026 — cambio de enfoque completo
+# ---------------------------------------------------------------------------
+# Las versiones anteriores de este scraper abrían un navegador (Playwright)
+# y "leían" la web de Yosports como lo haría una persona. Después de varias
+# rondas de pruebas (headless, con ventana, esperando más tiempo...) se
+# descubrió, inspeccionando el tráfico de red de la propia web con la
+# extensión de Claude en Chrome, que la web de Yosports en realidad obtiene
+# los partidos y las cuotas llamando a una API pública en JSON del propio
+# proveedor de apuestas que usa por debajo (Kambi):
+#
+#   https://eu.offering-api.kambicdn.com/offering/v2018/yosportses/listView/
+#       football/<país>/<liga>.json?lang=es_ES&market=ES&client_id=200&channel_id=1
+#
+# Esta API es la misma que usa el navegador del usuario para pintar la
+# tabla de partidos, así que en vez de simular un navegador entero (con
+# todos los problemas de arranque, tiempos de carga y demás que se han
+# visto) simplemente le pedimos los datos directamente por HTTP, como se
+# hace ya con Winamax (que usa WebSocket) en vez de leer su HTML.
+#
+# Ventajas de este cambio:
+# - Mucho más rápido (unas pocas peticiones JSON en vez de abrir un
+#   navegador completo).
+# - No depende de que la aplicación de Yosports termine de "arrancar" a
+#   tiempo, ni de si el navegador es visible o no.
+# - La fecha de cada partido viene ya en un formato estándar (ISO 8601),
+#   así que no hace falta interpretar textos como "sáb" o "13 oct".
+#
+# Si en el futuro Yosports cambia de proveedor de cuotas (deja de usar
+# Kambi) o cambia esta API, habría que volver a inspeccionar el tráfico de
+# red de la web (con las herramientas de desarrollador del navegador, o con
+# la extensión de Claude en Chrome) para encontrar la nueva URL.
+# ---------------------------------------------------------------------------
+
+# Mismos slugs que se usaban para las URLs de la web (localizados navegando
+# manualmente por el menú de ligas el 19/09/2026); aquí se usan para
+# construir la URL de la API en vez de la URL de la página.
 COMPETICIONES: Dict[str, tuple] = {
     "spain/la_liga": ("LaLiga", "football"),
     "spain/la_liga_2": ("Segunda División", "football"),
@@ -23,221 +53,106 @@ COMPETICIONES: Dict[str, tuple] = {
     "champions_league": ("Champions League", "football"),
 }
 
-URL_BASE = "https://www.yosports.es/"
-URL_COMPETICION = "https://www.yosports.es/#sports-hub/football/{slug}"
+URL_API = (
+    "https://eu.offering-api.kambicdn.com/offering/v2018/yosportses/listView/"
+    "football/{slug}.json?lang=es_ES&market=ES&client_id=200&channel_id=1"
+)
 
-MESES = {
-    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
-    "jul": 7, "ago": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dic": 12,
+HEADERS = {
+    # Un user-agent y un "Referer" normales, como los que mandaría el
+    # navegador al cargar la web — esta API es pública (la usa el propio
+    # sitio desde el navegador de cualquier visitante), pero por si acaso
+    # comprobara de dónde viene la petición, se lo indicamos igualmente.
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.yosports.es/",
+    "Accept": "application/json",
 }
 
-# Yosports abrevia el día de la semana en español para los partidos de los
-# próximos ~6 días ("lun", "mar", "mié", "jue", "vie", "sáb", "dom") y a
-# partir de ahí usa "DD mon" (p.ej. "13 oct"). No se ha visto que use
-# "Hoy"/"Mañana" como Sportium, pero se contempla por si acaso.
-DIAS_SEMANA = {
-    "lun": 0, "mar": 1, "mié": 2, "mie": 2, "jue": 3,
-    "vie": 4, "sáb": 5, "sab": 5, "dom": 6,
-}
 
-
-def _parsear_fecha(fecha_txt: str, hora_txt: str) -> datetime | None:
-    """
-    Convierte la fecha y hora que muestra Yosports (por separado, p.ej.
-    fecha_txt='sáb' u fecha_txt='13 oct', hora_txt='21:00') a un datetime en
-    UTC. Igual que en Sportium, es una conversión aproximada (asumimos que
-    la hora ya está en hora de España); si falla, no rellenamos
-    commence_time en vez de romper la sincronización completa.
-    """
-    if not fecha_txt or not hora_txt:
-        return None
-
-    fecha_txt = fecha_txt.strip().lower()
-    hora_txt = hora_txt.strip()
-
-    try:
-        h, m = hora_txt.split(":")
-        ahora = datetime.now(timezone.utc)
-
-        if fecha_txt in ("hoy",):
-            return ahora.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-
-        if fecha_txt in ("mañana", "manana"):
-            fecha = ahora + timedelta(days=1)
-            return fecha.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-
-        if fecha_txt in DIAS_SEMANA:
-            objetivo = DIAS_SEMANA[fecha_txt]
-            delta = (objetivo - ahora.weekday()) % 7
-            fecha = ahora + timedelta(days=delta)
-            return fecha.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-
-        # Formato "13 oct"
-        dia_str, mes_str = fecha_txt.split(" ")
-        mes_str = mes_str.strip(".")[:4]
-        mes = MESES.get(mes_str, MESES.get(mes_str[:3]))
-        if mes is None:
-            return None
-
-        fecha = datetime(ahora.year, mes, int(dia_str), int(h), int(m), tzinfo=timezone.utc)
-
-        # Si con el año actual la fecha queda muy en el pasado, es que el
-        # partido cae en el año que viene (p.ej. capturando en diciembre un
-        # partido de enero).
-        if fecha < ahora - timedelta(days=2):
-            fecha = fecha.replace(year=ahora.year + 1)
-
-        return fecha
-    except Exception:
-        return None
-
-
-def _cerrar_banner_cookies(page) -> None:
-    """Rechaza el banner de cookies si aparece. No es crítico si falla."""
-    try:
-        page.locator("button:has-text('Rechazar')").first.click(timeout=5000)
-    except Exception:
-        pass
-
-
-def _extraer_partidos_de_pagina(page, nombre_comp: str, deporte: str) -> List[Dict[str, Any]]:
-    """Lee los partidos ya renderizados en `page` (una página ya cargada en
-    la competición `nombre_comp`) y los devuelve como lista de dicts."""
-    partidos: List[Dict[str, Any]] = []
-
-    filas = page.query_selector_all(".KambiBC-sandwich-filter__event-list-item")
-
-    for fila in filas:
-        try:
-            participantes = fila.query_selector_all(".KambiBC-event-participants__name-participant-name")
-            equipos = [p_el.inner_text().strip() for p_el in participantes]
-            if len(equipos) != 2 or not equipos[0] or not equipos[1]:
-                continue
-
-            fecha_el = fila.query_selector(".KambiBC-event-item__start-time--date")
-            hora_el = fila.query_selector(".KambiBC-event-item__start-time--time")
-            fecha_txt = fecha_el.inner_text().strip() if fecha_el else None
-            hora_txt = hora_el.inner_text().strip() if hora_el else None
-
-            mercado_1x2 = fila.query_selector(".KambiBC-bet-offer--onecrosstwo")
-            if not mercado_1x2:
-                # Partido sin mercado 1X2 disponible (ya empezado, cancelado, etc.)
-                continue
-
-            outcomes = mercado_1x2.query_selector_all(".KambiBC-betty-outcome")
-            cuotas_txt = [o.inner_text().strip() for o in outcomes]
-            if len(cuotas_txt) != 3:
-                continue
-
-            cuota_1, cuota_x, cuota_2 = (
-                float(c.replace(",", ".")) for c in cuotas_txt
-            )
-
-            link = fila.query_selector("a.KambiBC-sandwich-filter__event-list-info")
-            href = link.get_attribute("href") if link else None
-            event_id = href.rstrip("/").split("/")[-1] if href else None
-
-            partidos.append({
-                "event_id": event_id,
-                "home_team": equipos[0],
-                "away_team": equipos[1],
-                "competicion": nombre_comp,
-                "deporte": deporte,
-                "fecha_txt": fecha_txt,
-                "hora_txt": hora_txt,
-                "cuota_1": cuota_1,
-                "cuota_x": cuota_x,
-                "cuota_2": cuota_2,
-            })
-        except Exception as e:
-            print(f"[Yosports] Error procesando un partido de {nombre_comp}: {e}")
+def _extraer_1x2(bet_offers: List[Dict[str, Any]]):
+    """Busca, dentro de los mercados ("betOffers") que trae la API para un
+    partido, el mercado de resultado final (1X2) y devuelve las tres
+    cuotas ya convertidas a decimal (la API las da como enteros x1000,
+    p.ej. 2400 significa 2.40). Devuelve None si no lo encuentra."""
+    for oferta in bet_offers or []:
+        criterio = oferta.get("criterion") or {}
+        if criterio.get("occurrenceType") != "GOALS" or criterio.get("lifetime") != "FULL_TIME":
             continue
 
-    return partidos
+        cuota_1 = cuota_x = cuota_2 = None
+        for outcome in oferta.get("outcomes", []):
+            tipo = outcome.get("type")
+            odds = outcome.get("odds")
+            if odds is None:
+                continue
+            valor = odds / 1000
+            if tipo == "OT_ONE":
+                cuota_1 = valor
+            elif tipo == "OT_CROSS":
+                cuota_x = valor
+            elif tipo == "OT_TWO":
+                cuota_2 = valor
+
+        if cuota_1 is not None and cuota_x is not None and cuota_2 is not None:
+            return cuota_1, cuota_x, cuota_2
+
+    return None
 
 
 def _capturar_datos_yosports() -> List[Dict[str, Any]]:
-    """
-    Recorre cada competición de interés en Yosports y extrae, para cada
-    partido con mercado 1X2 disponible: equipos, fecha/hora, id del evento
-    y las tres cuotas (local/empate/visitante).
-
-    Yosports usa Kambi (un proveedor de apuestas de terceros muy usado en
-    España). A diferencia de Sportium (que usa IDs numéricos y una pestaña
-    nueva por competición porque su widget se rompía si se reutilizaba una
-    sola pestaña), en Yosports cada competición tiene una URL con nombre
-    legible (p.ej. "#sports-hub/football/spain/la_liga") y la app se
-    comporta bien navegando de una a otra dentro de la MISMA pestaña,
-    SIEMPRE que la pestaña haya cargado antes la página base
-    (https://www.yosports.es/) sin ningún "#" al final: si se intenta
-    cargar directamente una URL con "#sports-hub/..." como primera carga de
-    la pestaña, la aplicación no la reconoce y redirige a la portada. Por
-    eso primero cargamos la home a secas y luego, ya con la app arrancada,
-    vamos cambiando de competición con la URL completa.
-    """
-    from playwright.sync_api import sync_playwright
-
+    """Pide a la API de Kambi la lista de partidos (con sus cuotas 1X2 ya
+    incluidas) de cada competición de interés. Reintenta una vez por
+    competición si la petición falla o no llega ninguna respuesta válida."""
     eventos: List[Dict[str, Any]] = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-        page = browser.new_page(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            locale="es-ES",
-        )
+    for slug, (nombre_comp, deporte) in COMPETICIONES.items():
+        url = URL_API.format(slug=slug)
+        print(f"[Yosports] Consultando {nombre_comp}...")
 
-        # Primera carga: la home a secas, para que la app arranque bien.
-        try:
-            page.goto(URL_BASE, wait_until="domcontentloaded", timeout=30000)
-            _cerrar_banner_cookies(page)
-            time.sleep(2)
-        except Exception as e:
-            print(f"[Yosports] Error cargando la home: {e}")
+        partidos_comp: List[Dict[str, Any]] = []
+        for intento in (1, 2):
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=15)
+                if resp.status_code != 200:
+                    print(f"[Yosports] {nombre_comp} (intento {intento}): HTTP {resp.status_code}")
+                    continue
 
-        for slug, (nombre_comp, deporte) in COMPETICIONES.items():
-            url = URL_COMPETICION.format(slug=slug)
-            print(f"[Yosports] Capturando {nombre_comp}...")
+                datos = resp.json()
+                for item in datos.get("events", []):
+                    evento = item.get("event", {})
+                    cuotas = _extraer_1x2(item.get("betOffers"))
+                    if cuotas is None:
+                        # Partido sin mercado 1X2 disponible todavía (o ya
+                        # empezado / cancelado).
+                        continue
 
-            partidos_comp: List[Dict[str, Any]] = []
-            for intento in (1, 2):
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    # El widget de Kambi puede tardar varios segundos en
-                    # pintar la lista de partidos (más si hay muchas
-                    # "apuestas especiales" antes en la página), así que
-                    # esperamos al selector en vez de un sleep fijo.
-                    page.wait_for_selector(
-                        ".KambiBC-sandwich-filter__event-list-item",
-                        timeout=20000,
-                    )
-                    time.sleep(1)
+                    home_team = evento.get("homeName")
+                    away_team = evento.get("awayName")
+                    if not home_team or not away_team:
+                        continue
 
-                    partidos_comp = _extraer_partidos_de_pagina(page, nombre_comp, deporte)
+                    cuota_1, cuota_x, cuota_2 = cuotas
+                    partidos_comp.append({
+                        "event_id": evento.get("id"),
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "competicion": nombre_comp,
+                        "deporte": deporte,
+                        "start_iso": evento.get("start"),
+                        "cuota_1": cuota_1,
+                        "cuota_x": cuota_x,
+                        "cuota_2": cuota_2,
+                    })
 
-                    if partidos_comp:
-                        break
-                    if intento == 1:
-                        print(f"[Yosports] {nombre_comp}: 0 partidos en el primer intento, reintentando...")
-                except Exception as e:
-                    print(f"[Yosports] Error en {nombre_comp} (intento {intento}): {e}")
-                    if intento == 1:
-                        # Por si la app se quedó en un estado raro, recargamos
-                        # la home antes de reintentar.
-                        try:
-                            page.goto(URL_BASE, wait_until="domcontentloaded", timeout=30000)
-                            time.sleep(2)
-                        except Exception:
-                            pass
+                break  # si hemos llegado hasta aquí, la petición ha ido bien
+            except Exception as e:
+                print(f"[Yosports] Error en {nombre_comp} (intento {intento}): {e}")
 
-            eventos.extend(partidos_comp)
-            print(f"[Yosports] {nombre_comp}: {len(partidos_comp)} partidos encontrados")
-
-            time.sleep(1.5)
-
-        browser.close()
+        eventos.extend(partidos_comp)
+        print(f"[Yosports] {nombre_comp}: {len(partidos_comp)} partidos encontrados")
 
     return eventos
 
@@ -247,7 +162,7 @@ def sync_events_from_yosports(db: Session) -> Dict[str, Any]:
     Sincroniza eventos de Yosports en la base de datos, igual que hacen
     sync_events_from_sportium() y sync_events_from_winamax().
     """
-    print("[Yosports] Iniciando captura de datos via Playwright...")
+    print("[Yosports] Iniciando captura de datos via la API de Kambi...")
     eventos_raw = _capturar_datos_yosports()
 
     if not eventos_raw:
@@ -275,7 +190,17 @@ def sync_events_from_yosports(db: Session) -> Dict[str, Any]:
         partido = f"{home_team} vs {away_team}"
         competicion = ev["competicion"]
 
-        commence_time = _parsear_fecha(ev["fecha_txt"], ev["hora_txt"])
+        commence_time = None
+        if ev.get("start_iso"):
+            try:
+                # La API da la fecha en ISO 8601 UTC (p.ej.
+                # "2026-10-09T19:00:00Z"), mucho más fiable que interpretar
+                # textos como "sáb" o "13 oct" a partir del HTML.
+                commence_time = datetime.fromisoformat(
+                    ev["start_iso"].replace("Z", "+00:00")
+                )
+            except Exception:
+                commence_time = None
 
         # Mismo formato que el resto de providers: las claves home/away son
         # el nombre literal del equipo tal cual lo da la casa, y "draw"
@@ -311,7 +236,7 @@ def sync_events_from_yosports(db: Session) -> Dict[str, Any]:
             away_team=away_team,
             cuotas=json.dumps(markets, ensure_ascii=False),
             source="yosports",
-            external_id=ev["event_id"],
+            external_id=str(ev["event_id"]) if ev.get("event_id") is not None else None,
         )
 
         prepared_rows.append(event)
