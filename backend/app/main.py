@@ -5,6 +5,7 @@ from datetime import datetime
 import csv
 import shutil
 import json
+import threading
 
 # --- FastAPI ---
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
@@ -133,7 +134,22 @@ def on_startup():
     ensure_default_users()
     
     scheduler = BackgroundScheduler()
-    
+
+    # Candado compartido entre los scrapers que abren un navegador automático
+    # de verdad (Playwright/Chromium): ahora mismo Winamax y Sportium. Sirve
+    # para que nunca haya dos navegadores de estos abiertos a la vez en el
+    # servidor — si uno ya está en marcha cuando le toca el turno al otro,
+    # este último simplemente se salta esa vuelta (lo reintentará en el
+    # siguiente ciclo, 10-15 min después) en vez de arrancar igualmente y
+    # competir por la misma CPU/memoria. Eso es lo que estaba causando que
+    # Sportium (y en concreto Segunda División) a veces se quedara esperando
+    # más de la cuenta y devolviera "0 partidos".
+    #
+    # El día que se añadan más casas que también necesiten navegador
+    # automático, deberían usar este mismo candado (o una cola con el mismo
+    # principio) en vez de tener cada una el suyo.
+    _browser_scraper_lock = threading.Lock()
+
     def auto_sync():
         from app.services.providers.oddspapi_provider import OddsPapiProvider
         from app.services.sync_service_oddspapi import sync_events_from_oddspapi
@@ -160,28 +176,46 @@ def on_startup():
         finally:
             db.close()
     def auto_sync_winamax():
-        from app.services.sync_service_winamax import sync_events_from_winamax
-        from app.db.session import SessionLocal
+        # No arrancamos el navegador de Winamax si Sportium ya está usando
+        # el suyo en este momento — ver comentario junto a
+        # _browser_scraper_lock más arriba.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Winamax sync saltada: Sportium está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
         try:
-            db = SessionLocal()
-            result = sync_events_from_winamax(db=db)
-            print(f"✅ Winamax sync OK: {result['inserted']} eventos insertados")
-        except Exception as e:
-            print(f"❌ Winamax sync error: {e}")
+            from app.services.sync_service_winamax import sync_events_from_winamax
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_winamax(db=db)
+                print(f"✅ Winamax sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Winamax sync error: {e}")
+            finally:
+                db.close()
         finally:
-            db.close()
+            _browser_scraper_lock.release()
 
     def auto_sync_sportium():
-        from app.services.sync_service_sportium import sync_events_from_sportium
-        from app.db.session import SessionLocal
+        # Igual que en Winamax: si el candado ya lo tiene Winamax, esta
+        # vuelta de Sportium se salta en vez de competir por el mismo
+        # navegador/CPU.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Sportium sync saltada: Winamax está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
         try:
-            db = SessionLocal()
-            result = sync_events_from_sportium(db=db)
-            print(f"✅ Sportium sync OK: {result['inserted']} eventos insertados")
-        except Exception as e:
-            print(f"❌ Sportium sync error: {e}")
+            from app.services.sync_service_sportium import sync_events_from_sportium
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_sportium(db=db)
+                print(f"✅ Sportium sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Sportium sync error: {e}")
+            finally:
+                db.close()
         finally:
-            db.close()
+            _browser_scraper_lock.release()
 
     def auto_sync_yosports():
         from app.services.sync_service_yosports import sync_events_from_yosports
