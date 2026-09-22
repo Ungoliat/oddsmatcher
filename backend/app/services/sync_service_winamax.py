@@ -39,6 +39,58 @@ URLS_LIGAS = [
     ("https://www.winamax.es/apuestas-deportivas/sports/1/30/42", "Bundesliga"),
 ]
 
+def _extraer_cuotas_1x2(match_id: int, home_team: str, away_team: str, datos: Dict):
+    """
+    Busca, dentro de los datos brutos capturados por WebSocket, el mercado
+    principal (1X2, "Resultado") del partido `match_id` y devuelve sus tres
+    cuotas ya con las claves home_team / "draw" / away_team — el mismo
+    formato que usan el resto de proveedores (Sportium, Yosports...).
+
+    Estructura de los datos brutos de Winamax (comprobada a mano sobre un
+    mensaje real capturado por el WebSocket):
+    - datos["matches"][<id>]["mainBetId"] → id del mercado principal del
+      partido (el "Resultado", no un mercado secundario tipo hándicap).
+    - datos["bets"][<mainBetId>] → ese mercado; "template" == "3way"
+      confirma que es un 1X2 de toda la vida, y "outcomes" trae los tres
+      ids de resultado (local / empate / visitante, en ese orden).
+    - datos["outcomes"][<id>]["code"] → "1" / "x" / "2" según el resultado.
+    - datos["odds"][<id>] → la cuota de ese resultado.
+
+    Devuelve None si el partido no tiene mercado 1X2 (p.ej. si por lo que
+    sea el mercado principal es de otro tipo) o si falta algún dato.
+    """
+    match = datos.get("matches", {}).get(str(match_id))
+    if not match:
+        return None
+
+    bet_id = match.get("mainBetId")
+    bet = datos.get("bets", {}).get(str(bet_id))
+    if not bet or bet.get("template") != "3way":
+        return None
+
+    cuotas: Dict[str, float] = {}
+    for outcome_id in bet.get("outcomes", []):
+        outcome = datos.get("outcomes", {}).get(str(outcome_id))
+        if not outcome:
+            continue
+        odds = datos.get("odds", {}).get(str(outcome_id))
+        if odds is None:
+            continue
+
+        codigo = outcome.get("code")
+        if codigo == "1":
+            cuotas[home_team] = odds
+        elif codigo == "x":
+            cuotas["draw"] = odds
+        elif codigo == "2":
+            cuotas[away_team] = odds
+
+    if len(cuotas) != 3:
+        return None
+
+    return cuotas
+
+
 def _capturar_datos_winamax() -> Dict:
     from playwright.sync_api import sync_playwright
 
@@ -160,7 +212,7 @@ def sync_events_from_winamax(db: Session) -> Dict[str, Any]:
                 pass
 
         # Extraer cuotas 1X2
-        cuotas_1x2 = _extraer_cuotas_1x2(match_id, datos)
+        cuotas_1x2 = _extraer_cuotas_1x2(match_id, home_team, away_team, datos)
         if not cuotas_1x2:
             skipped += 1
             continue
