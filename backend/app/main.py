@@ -59,6 +59,17 @@ EVENTS_CACHE = []
 
 app = FastAPI()
 
+# Candado compartido entre TODOS los sitios que puedan arrancar un scraper
+# con navegador real (Playwright/Chromium) — ahora mismo Winamax y Sportium.
+# Tiene que ser una variable de todo el archivo (no solo del arranque del
+# servidor) porque lo usan tanto las sincronizaciones automáticas programadas
+# como los botones/llamadas manuales de administración (/admin/sync-winamax,
+# /admin/sync-sportium): así nunca hay dos navegadores de estos abiertos a la
+# vez en el servidor, vengan de donde vengan. Si dos intentan arrancar casi a
+# la vez, el segundo simplemente espera su turno en vez de competir por la
+# misma CPU/memoria (que es lo que causaba capturas vacías o a medias).
+_browser_scraper_lock = threading.Lock()
+
 Base.metadata.create_all(bind=engine)
 run_sqlite_safe_migrations(engine)
 
@@ -135,20 +146,10 @@ def on_startup():
     
     scheduler = BackgroundScheduler()
 
-    # Candado compartido entre los scrapers que abren un navegador automático
-    # de verdad (Playwright/Chromium): ahora mismo Winamax y Sportium. Sirve
-    # para que nunca haya dos navegadores de estos abiertos a la vez en el
-    # servidor — si uno ya está en marcha cuando le toca el turno al otro,
-    # este último simplemente se salta esa vuelta (lo reintentará en el
-    # siguiente ciclo, 10-15 min después) en vez de arrancar igualmente y
-    # competir por la misma CPU/memoria. Eso es lo que estaba causando que
-    # Sportium (y en concreto Segunda División) a veces se quedara esperando
-    # más de la cuenta y devolviera "0 partidos".
-    #
-    # El día que se añadan más casas que también necesiten navegador
-    # automático, deberían usar este mismo candado (o una cola con el mismo
-    # principio) en vez de tener cada una el suyo.
-    _browser_scraper_lock = threading.Lock()
+    # El candado en sí (_browser_scraper_lock) se define arriba, a nivel de
+    # todo el archivo, para que también lo puedan usar los botones manuales
+    # de /admin/sync-winamax y /admin/sync-sportium — ver el comentario junto
+    # a su definición.
 
     def auto_sync():
         from app.services.providers.oddspapi_provider import OddsPapiProvider
@@ -595,7 +596,27 @@ def sync_winamax(
     db: Session = Depends(get_db),
 ):
     from app.services.sync_service_winamax import sync_events_from_winamax
-    result = sync_events_from_winamax(db=db)
+    # Mismo candado que usan las sincronizaciones automáticas: si Sportium
+    # (automático o manual) está usando el navegador ahora mismo, esperamos
+    # a que termine (hasta 3 minutos) en vez de arrancar Winamax también y
+    # que los dos se pisen entre sí, que es lo que causaba capturas vacías
+    # o a medias cuando coincidían.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "winamax",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax o Sportium) en marcha desde "
+                "hace más de 3 minutos. Espera a que termine y vuelve a "
+                "intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_winamax(db=db)
+    finally:
+        _browser_scraper_lock.release()
     return result
 
 
@@ -605,7 +626,24 @@ def sync_sportium(
     db: Session = Depends(get_db),
 ):
     from app.services.sync_service_sportium import sync_events_from_sportium
-    result = sync_events_from_sportium(db=db)
+    # Igual que en Winamax: esperamos el candado en vez de competir por el
+    # mismo navegador si Winamax lo está usando en este momento.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "sportium",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax o Sportium) en marcha desde "
+                "hace más de 3 minutos. Espera a que termine y vuelve a "
+                "intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_sportium(db=db)
+    finally:
+        _browser_scraper_lock.release()
     return result
 
 
