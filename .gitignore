@@ -31,3 +31,7 @@ dist/
 # Scripts temporales
 backend/create_bets_table.py
 backend/add_tipo_column.pycerts/
+
+# Scripts y capturas de investigacion (Yaass / Winamax) - no hace falta
+# guardarlos en el historial, son solo apuntes de como se investigo
+backend/debug_yaass_winamax/

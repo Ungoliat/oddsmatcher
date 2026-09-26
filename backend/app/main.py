@@ -218,6 +218,94 @@ def on_startup():
         finally:
             _browser_scraper_lock.release()
 
+    def auto_sync_solcasino():
+        # Mismo criterio que Winamax/Sportium: si el navegador ya lo está
+        # usando otro de los dos, esta vuelta de Solcasino se salta en vez
+        # de competir por el mismo navegador/CPU.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Solcasino sync saltada: otro scraper (Winamax/Sportium) está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
+        try:
+            from app.services.sync_service_solcasino import sync_events_from_solcasino
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_solcasino(db=db)
+                print(f"✅ Solcasino sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Solcasino sync error: {e}")
+            finally:
+                db.close()
+        finally:
+            _browser_scraper_lock.release()
+
+    def auto_sync_retabet():
+        # Mismo criterio que Winamax/Sportium/Solcasino: si el navegador ya
+        # lo está usando otro de ellos, esta vuelta de Retabet se salta en
+        # vez de competir por el mismo navegador/CPU.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Retabet sync saltada: otro scraper (Winamax/Sportium/Solcasino) está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
+        try:
+            from app.services.sync_service_retabet import sync_events_from_retabet
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_retabet(db=db)
+                print(f"✅ Retabet sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Retabet sync error: {e}")
+            finally:
+                db.close()
+        finally:
+            _browser_scraper_lock.release()
+
+    def auto_sync_marcaapuestas():
+        # Marcaapuestas usa el mismo tipo de navegador (Playwright) que
+        # Winamax/Sportium/Solcasino/Retabet, así que comparte el mismo
+        # candado: si cualquiera de esos cuatro lo está usando ahora mismo,
+        # esta vuelta de Marcaapuestas se salta en vez de competir por el
+        # mismo navegador/CPU.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Marcaapuestas sync saltada: otro scraper (Winamax/Sportium/Solcasino/Retabet) está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
+        try:
+            from app.services.sync_service_marcaapuestas import sync_events_from_marcaapuestas
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_marcaapuestas(db=db)
+                print(f"✅ Marcaapuestas sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Marcaapuestas sync error: {e}")
+            finally:
+                db.close()
+        finally:
+            _browser_scraper_lock.release()
+
+    def auto_sync_versus():
+        # Versus usa el mismo tipo de navegador (Playwright) que
+        # Winamax/Sportium/Solcasino/Retabet/Marcaapuestas, así que
+        # comparte el mismo candado: si cualquiera de esos lo está usando
+        # ahora mismo, esta vuelta de Versus se salta en vez de competir
+        # por el mismo navegador/CPU.
+        if not _browser_scraper_lock.acquire(blocking=False):
+            print("⏭️  Versus sync saltada: otro scraper (Winamax/Sportium/Solcasino/Retabet/Marcaapuestas) está usando el navegador ahora mismo, se reintenta en el próximo ciclo")
+            return
+        try:
+            from app.services.sync_service_versus import sync_events_from_versus
+            from app.db.session import SessionLocal
+            try:
+                db = SessionLocal()
+                result = sync_events_from_versus(db=db)
+                print(f"✅ Versus sync OK: {result['inserted']} eventos insertados")
+            except Exception as e:
+                print(f"❌ Versus sync error: {e}")
+            finally:
+                db.close()
+        finally:
+            _browser_scraper_lock.release()
+
     def auto_sync_yosports():
         from app.services.sync_service_yosports import sync_events_from_yosports
         from app.db.session import SessionLocal
@@ -227,6 +315,46 @@ def on_startup():
             print(f"✅ Yosports sync OK: {result['inserted']} eventos insertados")
         except Exception as e:
             print(f"❌ Yosports sync error: {e}")
+        finally:
+            db.close()
+
+    def auto_sync_racha():
+        from app.services.sync_service_racha import sync_events_from_racha
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_racha(db=db)
+            print(f"✅ Racha sync OK: {result['inserted']} eventos insertados")
+        except Exception as e:
+            print(f"❌ Racha sync error: {e}")
+        finally:
+            db.close()
+
+    def auto_sync_codere():
+        from app.services.sync_service_codere import sync_events_from_codere
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_codere(db=db)
+            print(f"✅ Codere sync OK: {result['inserted']} eventos insertados")
+        except Exception as e:
+            print(f"❌ Codere sync error: {e}")
+        finally:
+            db.close()
+
+    def auto_sync_yaass():
+        # Yaass no usa navegador (habla directamente con su API por
+        # internet), así que no necesita _browser_scraper_lock: puede
+        # ejecutarse aunque Winamax/Sportium/etc. estén ocupando el
+        # navegador en ese momento.
+        from app.services.sync_service_yaass import sync_events_from_yaass
+        from app.db.session import SessionLocal
+        try:
+            db = SessionLocal()
+            result = sync_events_from_yaass(db=db)
+            print(f"✅ Yaass sync OK: {result['inserted']} eventos insertados")
+        except Exception as e:
+            print(f"❌ Yaass sync error: {e}")
         finally:
             db.close()
 
@@ -248,7 +376,14 @@ def on_startup():
     # scheduler.add_job(auto_sync_betfair, "interval", minutes=1)
     scheduler.add_job(auto_sync_winamax, "interval", minutes=10)
     scheduler.add_job(auto_sync_sportium, "interval", minutes=15)
+    scheduler.add_job(auto_sync_solcasino, "interval", minutes=15)
+    scheduler.add_job(auto_sync_retabet, "interval", minutes=15)
+    scheduler.add_job(auto_sync_marcaapuestas, "interval", minutes=15)
+    scheduler.add_job(auto_sync_versus, "interval", minutes=15)
     scheduler.add_job(auto_sync_yosports, "interval", minutes=15)
+    scheduler.add_job(auto_sync_racha, "interval", minutes=15)
+    scheduler.add_job(auto_sync_codere, "interval", minutes=15)
+    scheduler.add_job(auto_sync_yaass, "interval", minutes=15)
     # scheduler.add_job(auto_sync_the_odds_api, "interval", minutes=1)  # activar con plan de pago
     scheduler.start()
     print("🕐 Scheduler arrancado — OddsPapi cada 15 min, Winamax cada 10 min, Sportium cada 15 min")
@@ -647,6 +782,119 @@ def sync_sportium(
     return result
 
 
+@app.post("/admin/sync-solcasino")
+def sync_solcasino(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_solcasino import sync_events_from_solcasino
+    # Mismo candado que Winamax/Sportium: si cualquiera de los dos está
+    # usando el navegador ahora mismo, esperamos (hasta 3 minutos) en vez de
+    # arrancar Solcasino también y que se pisen entre sí.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "solcasino",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax, Sportium o Solcasino) en "
+                "marcha desde hace más de 3 minutos. Espera a que termine y "
+                "vuelve a intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_solcasino(db=db)
+    finally:
+        _browser_scraper_lock.release()
+    return result
+
+
+@app.post("/admin/sync-retabet")
+def sync_retabet(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_retabet import sync_events_from_retabet
+    # Mismo candado que Winamax/Sportium/Solcasino: si cualquiera de ellos
+    # está usando el navegador ahora mismo, esperamos (hasta 3 minutos) en
+    # vez de arrancar Retabet también y que se pisen entre sí.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "retabet",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax, Sportium, Solcasino o "
+                "Retabet) en marcha desde hace más de 3 minutos. Espera a "
+                "que termine y vuelve a intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_retabet(db=db)
+    finally:
+        _browser_scraper_lock.release()
+    return result
+
+
+@app.post("/admin/sync-marcaapuestas")
+def sync_marcaapuestas(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_marcaapuestas import sync_events_from_marcaapuestas
+    # Mismo candado que Winamax/Sportium/Solcasino/Retabet: si cualquiera de
+    # ellos está usando el navegador ahora mismo, esperamos (hasta 3 minutos)
+    # en vez de arrancar Marcaapuestas también y que se pisen entre sí.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "marcaapuestas",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax, Sportium, Solcasino, "
+                "Retabet o Marcaapuestas) en marcha desde hace más de 3 "
+                "minutos. Espera a que termine y vuelve a intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_marcaapuestas(db=db)
+    finally:
+        _browser_scraper_lock.release()
+    return result
+
+
+@app.post("/admin/sync-versus")
+def sync_versus(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_versus import sync_events_from_versus
+    # Mismo candado que Winamax/Sportium/Solcasino/Retabet/Marcaapuestas:
+    # si cualquiera de ellos está usando el navegador ahora mismo,
+    # esperamos (hasta 3 minutos) en vez de arrancar Versus también y que
+    # se pisen entre sí.
+    adquirido = _browser_scraper_lock.acquire(timeout=180)
+    if not adquirido:
+        return {
+            "provider": "versus",
+            "inserted": 0,
+            "skipped": 0,
+            "error": (
+                "Hay otra sincronización (Winamax, Sportium, Solcasino, "
+                "Retabet, Marcaapuestas o Versus) en marcha desde hace más "
+                "de 3 minutos. Espera a que termine y vuelve a intentarlo."
+            ),
+        }
+    try:
+        result = sync_events_from_versus(db=db)
+    finally:
+        _browser_scraper_lock.release()
+    return result
+
+
 @app.post("/admin/sync-yosports")
 def sync_yosports(
     _: UserPublic = Depends(require_role("admin")),
@@ -654,6 +902,37 @@ def sync_yosports(
 ):
     from app.services.sync_service_yosports import sync_events_from_yosports
     result = sync_events_from_yosports(db=db)
+    return result
+
+
+@app.post("/admin/sync-racha")
+def sync_racha(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_racha import sync_events_from_racha
+    result = sync_events_from_racha(db=db)
+    return result
+
+
+@app.post("/admin/sync-codere")
+def sync_codere(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.sync_service_codere import sync_events_from_codere
+    result = sync_events_from_codere(db=db)
+    return result
+
+
+@app.post("/admin/sync-yaass")
+def sync_yaass(
+    _: UserPublic = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    # No hace falta el candado del navegador: Yaass no abre ninguno.
+    from app.services.sync_service_yaass import sync_events_from_yaass
+    result = sync_events_from_yaass(db=db)
     return result
 
 
@@ -727,7 +1006,14 @@ def sync_all(
     from app.services.sync_service_betfair import sync_betfair_odds
     from app.services.sync_service_winamax import sync_events_from_winamax
     from app.services.sync_service_sportium import sync_events_from_sportium
+    from app.services.sync_service_marcaapuestas import sync_events_from_marcaapuestas
+    from app.services.sync_service_versus import sync_events_from_versus
     from app.services.sync_service_yosports import sync_events_from_yosports
+    from app.services.sync_service_solcasino import sync_events_from_solcasino
+    from app.services.sync_service_retabet import sync_events_from_retabet
+    from app.services.sync_service_racha import sync_events_from_racha
+    from app.services.sync_service_codere import sync_events_from_codere
+    from app.services.sync_service_yaass import sync_events_from_yaass
     from app.services.providers.the_odds_api_provider import TheOddsApiProvider
     from app.services.providers.betfair_provider import BetfairProvider
 
@@ -747,20 +1033,59 @@ def sync_all(
     except Exception as e:
         results["betfair"] = {"error": str(e)}
 
-    try:
-        results["winamax"] = sync_events_from_winamax(db=db)
-    except Exception as e:
-        results["winamax"] = {"error": str(e)}
-
-    try:
-        results["sportium"] = sync_events_from_sportium(db=db)
-    except Exception as e:
-        results["sportium"] = {"error": str(e)}
+    # Winamax, Sportium y Solcasino comparten un único navegador a la vez
+    # (_browser_scraper_lock): antes, /admin/sync-all los lanzaba sin pasar
+    # por ese candado, así que si esta llamada coincidía con una
+    # sincronización automática ya en marcha, se abrían DOS navegadores a la
+    # vez sin que se enterasen el uno del otro, ralentizando todo y dejando
+    # a la que llegaba después (normalmente Solcasino, la última de la
+    # lista) esperando su turno de forma casi permanente. Ahora las tres
+    # respetan la misma cola, tanto si se lanzan solas, automáticamente, o
+    # desde este botón de "sincronizar todo".
+    for nombre, funcion_sync in (
+        ("winamax", sync_events_from_winamax),
+        ("sportium", sync_events_from_sportium),
+        ("solcasino", sync_events_from_solcasino),
+        ("retabet", sync_events_from_retabet),
+        ("marcaapuestas", sync_events_from_marcaapuestas),
+        ("versus", sync_events_from_versus),
+    ):
+        adquirido = _browser_scraper_lock.acquire(timeout=180)
+        if not adquirido:
+            results[nombre] = {
+                "error": (
+                    "Hay otra sincronización con navegador en marcha desde "
+                    "hace más de 3 minutos. Se ha saltado esta casa en este "
+                    "ciclo de sincronizar todo."
+                ),
+            }
+            continue
+        try:
+            results[nombre] = funcion_sync(db=db)
+        except Exception as e:
+            results[nombre] = {"error": str(e)}
+        finally:
+            _browser_scraper_lock.release()
 
     try:
         results["yosports"] = sync_events_from_yosports(db=db)
     except Exception as e:
         results["yosports"] = {"error": str(e)}
+
+    try:
+        results["racha"] = sync_events_from_racha(db=db)
+    except Exception as e:
+        results["racha"] = {"error": str(e)}
+
+    try:
+        results["codere"] = sync_events_from_codere(db=db)
+    except Exception as e:
+        results["codere"] = {"error": str(e)}
+
+    try:
+        results["yaass"] = sync_events_from_yaass(db=db)
+    except Exception as e:
+        results["yaass"] = {"error": str(e)}
 
     total = sum(
         r.get("inserted", r.get("updated", 0))
@@ -793,7 +1118,7 @@ def get_matching_odds(
         "betsson", "williamhill", "marathonbet", "leovegas_se",
         "onexbet", "betfair_ex_eu", "winamax_fr", "888sport",
         "casumo", "pokerstars", "interwetten", "tonybet", "betway",
-        "bwin", "bet365", "sportium", "yosports",
+        "bwin", "bet365", "sportium", "yosports", "solcasino", "retabet", "racha", "codere", "marcaapuestas", "versus", "yaass",
     }
 
     data = get_grouped_events(db=db)
